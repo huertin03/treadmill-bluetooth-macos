@@ -8,9 +8,6 @@
 //! Never write `0xFF00` / `0xFF01` / `0xFAB*` from here. Never send
 //! `F0 10 00` (the app's unverified "light reset" on connect).
 
-// Callers land in later 058 commits; tests already exercise the items.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::fmt;
 use std::str::FromStr;
 

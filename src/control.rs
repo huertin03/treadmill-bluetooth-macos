@@ -4,17 +4,21 @@
 //! Point, then wait for the indicated response `[0x80, request_op, result]`
 //! where result `0x01` = success. `RequestControl` must succeed before any
 //! other command is accepted.
+//!
+//! Also writes the Yesoul ambient LED strip on vendor `0xFFF2` (задача 058);
+//! that path is a fire-and-forget ATT write, not a Control Point opcode.
 
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use btleplug::api::{Characteristic, Peripheral as _, WriteType};
+use btleplug::api::{CharPropFlags, Characteristic, Peripheral as _, WriteType};
 use btleplug::platform::Peripheral;
 use futures::StreamExt;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
 use crate::ftms;
+use crate::led::{self, LedState};
 use crate::speed::CentiKmh;
 
 /// FTMS Control Point opcodes (subset used here).
@@ -82,6 +86,44 @@ impl<'a> Controller<'a> {
         // FTMS encodes speed as uint16 in units of 0.01 km/h, little-endian.
         self.execute(opcode::SET_TARGET_SPEED, &speed.to_wire().to_le_bytes())
             .await
+    }
+
+    /// Toggle the ambient LED strip (vendor `0xFFF2`, задача 058).
+    ///
+    /// Prefers WriteWithoutResponse; falls back to WithResponse only when the
+    /// characteristic lacks that property (this unit's GATT snapshot advertises
+    /// plain `write`). No indication/notify reply is expected — unlike Control
+    /// Point opcodes — so the bounded wait is around the ATT write itself.
+    #[allow(dead_code)] // dispatched from daemon execute_control_command (задача 058)
+    pub async fn set_led(&self, state: LedState) -> Result<()> {
+        let Some(led_char) = self
+            .peripheral
+            .characteristics()
+            .into_iter()
+            .find(|c| c.uuid == led::LED_WRITE_CHAR && c.service_uuid == led::LED_SERVICE)
+        else {
+            warn!("LED write characteristic (0xFFF2 on service 0xFFF0) not found");
+            bail!("LED write characteristic (0xFFF2 on service 0xFFF0) not found");
+        };
+
+        let write_type = if led_char
+            .properties
+            .contains(CharPropFlags::WRITE_WITHOUT_RESPONSE)
+        {
+            WriteType::WithoutResponse
+        } else {
+            WriteType::WithResponse
+        };
+
+        timeout(
+            RESPONSE_TIMEOUT,
+            self.peripheral
+                .write(&led_char, &led::led_frame(state), write_type),
+        )
+        .await
+        .with_context(|| format!("LED {state} write timed out within {RESPONSE_TIMEOUT:?}"))?
+        .with_context(|| format!("write LED {state} frame to 0xFFF2"))?;
+        Ok(())
     }
 
     /// Set target inclination in percent (FTMS sint16, 0.1 % units).
