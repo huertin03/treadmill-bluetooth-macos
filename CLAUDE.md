@@ -78,7 +78,7 @@ This file is read by two different agents. Follow the branch that matches who yo
   `led_frame` (`F0 10 02` / `F0 10 01`), GATT `0xFFF0`/`0xFFF2`. Не FitShow-кадр
   (нет конверта `02 … xor 03`). Никогда не пишет `0xFF00`/`0xFF01`/`0xFAB*` и
   не шлёт `F0 10 00`. Чистый, без BLE. On-connect default (`led_on_connect`) —
-  задача 059: loader в `goals.rs`, apply в `src/daemon/led.rs`.
+  задача 059: loader в `src/config/led_on_connect.rs`, apply в `src/daemon/led.rs`.
 - `src/presence.rs` — детекция присутствия: лента крутится, но шаги не растут →
   `AwayWhileRunning`. `observe(now, speed: Option<CentiKmh>, steps)` — время
   инъектируется (демон даёт `Instant::now()`, replay — синтез из `ts_ms`),
@@ -178,12 +178,17 @@ This file is read by two different agents. Follow the branch that matches who yo
 - `src/notify.rs` — нативные macOS-уведомления (`mac-notification-sys`,
   чистый Rust, без Swift в рантайме) с иконкой и именем "Treadmill";
   toast'ы presence/goal, компактный форматтер длительности `humanize_short`.
-- `src/goals.rs` — дневные step-goal вехи: загрузка `config.toml` (TOML, задача 023),
-  присвоение tier'ов (1–3), чистая функция «какие пороги праздновать сейчас».
-  Плюс `load_workout_gap_minutes()` — read-time порог склейки сегментов в
-  тренировки из того же `goals.json` (задача 014, дефолт 15). Плюс
-  `load_auto_pause()` — порог авто-паузы простаивающей ленты из того же файла
-  (задача 020, дефолт 5 мин, `0` — выключено), `None` = выключено.
+- `src/goals.rs` — дневные step-goal вехи: загрузка порогов `goals = [...]`
+  из `config.toml` (TOML, задача 023), присвоение tier'ов (1–3), чистая
+  функция «какие пороги праздновать сейчас». Path/mtime файла — в
+  `src/config/file.rs`.
+- `src/config/` — per-user TOML-слой (задача 023): `file.rs` (path/symlink/
+  mtime/`write_atomic`/`read_config_value`/`upsert_top_level_key`) + один
+  файл на top-level ключ. `load_workout_gap_minutes()` (`workout_gap.rs`) —
+  read-time порог склейки сегментов в тренировки из того же `goals.json`
+  (задача 014, дефолт 15). `load_auto_pause()` (`auto_pause.rs`) — порог
+  авто-паузы простаивающей ленты из того же файла (задача 020, дефолт 5 мин,
+  `0` — выключено), `None` = выключено.
 - `src/logger.rs` — сырой JSONL-лог телеметрии (source-of-truth параллельно с SQLite).
 - `src/store.rs` (доп., задача 025) — `hr_samples` (индекс по `ts_ms`, не по
   `session_id` — агрегаты джойнят по временному окну тренировки/дня) +
@@ -198,7 +203,7 @@ This file is read by two different agents. Follow the branch that matches who yo
   `controller` (`next_speed`/`warmup`/`safety_force_reduce`), `config`
   (load/parse `[zone_hold]`), `cli_config` (`upsert_zone_hold_keys`/
   `replace_zones`). `hrmax_tanaka`, `resolve_zone_bpm` (`hrmax`/`karvonen`,
-  не смешиваются), `ZoneHoldConfig` (absent-тихо/invalid-WARN как `goals.rs`),
+  не смешиваются), `ZoneHoldConfig` (absent-тихо/invalid-WARN как `src/config/`),
   контроллер `band`/`center` (deadband, шаг, кламп — время и bpm инъекцией),
   `safety_cap_bpm`, `classify_position` (below/in/above для виджета).
   `ZoneDef.id` — стабильный идентификатор зоны (явный `id = "..."` в
@@ -239,12 +244,12 @@ This file is read by two different agents. Follow the branch that matches who yo
   float-glue. `ZoneSession::tick` принимает `Option<CentiKmh>` и молча
   пропускает тик, если в FTMS-фрейме скорости нет (легитимный
   `MORE_DATA`-сплит) — подстановка нуля читалась бы как «лента встала».
-- `src/goals.rs` (доп., задача 029) — `load_show_speed()` (top-level
-  `show_speed`, тот же absent-тихо/invalid-WARN стиль, дефолт `false`) +
-  `upsert_top_level_key(path, key, value)` — line-based апдейт **top-level**
-  ключа (не секции — ключ должен стоять до первого `[section]`, иначе
-  невалидный TOML), тем же приёмом, что `zone_hold::upsert_zone_hold_keys`,
-  но без секционного якоря. `src/store/`/`src/daemon/` — снапшот живой
+- `src/config/show_speed.rs` / `src/config/file.rs` (доп., задача 029) —
+  `load_show_speed()` (top-level `show_speed`, тот же absent-тихо/invalid-WARN
+  стиль, дефолт `false`) + `upsert_top_level_key(path, key, value)` — line-based
+  апдейт **top-level** ключа (не секции — ключ должен стоять до первого
+  `[section]`, иначе невалидный TOML), тем же приёмом, что
+  `zone_hold::upsert_zone_hold_keys`, но без секционного якоря. `src/store/`/`src/daemon/` — снапшот живой
   скорости ленты `last_speed_kmh`+`last_speed_ts` в `daemon_status`
   (`Option<f64>`/`Option<i64>` millis, ALTER-колонки), зеркалит `last_bpm`/
   `last_bpm_ts` (задача 025) — обновляется на **каждом** телеметрическом
@@ -363,7 +368,10 @@ mirror того же порядка — **fmt валится чаще всего
 
 ## Конфиг (per-user)
 
-Конфиг (цели, gap, авто-пауза, Zone Hold) — **per-user**, живёт **не в этом
+Код слоя — `src/config/` (`file.rs` + один модуль на top-level ключ);
+`src/goals.rs` владеет только step-goal доменом (`Goal` / `load_goals` /
+`assign_tiers` / `thresholds_to_celebrate`). Конфиг (цели, gap, авто-пауза,
+Zone Hold) — **per-user**, живёт **не в этом
 репо**, а в домашней директории: **`~/.config/treadmill-bluetooth-macos/config.toml`**
 (`$HOME`-anchored, работает под launchd). **TOML** (задача 023, был JSON
 `config.json`/`goals.json`) — ради комментариев: дефолты в примере видны

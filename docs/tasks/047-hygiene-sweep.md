@@ -13,7 +13,7 @@
 - [x] **`presence_state` — `PresenceState::wire()` + WARN on unrecognised**
 - [x] **`fitshow` framing tests + CLAUDE.md reverse-eng commands**
 - [x] **`compute_default_speed` gated on zone_hold.enabled**
-- [x] **`goals.rs`: shared `read_config_value` for top-level key readers**
+- [x] **`src/config/file.rs`: shared `read_config_value` for top-level key readers**
 - [x] **`default_speed.rs`: `total_cmp` instead of `partial_cmp().expect`**
 
 ## Acceptance
