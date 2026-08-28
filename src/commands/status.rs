@@ -302,6 +302,10 @@ pub(crate) fn run_status() -> Result<()> {
                     "  workout gap: {} (read-time, applied when stats are read)",
                     highlight_config(format!("{}m", goals::load_workout_gap_minutes()))
                 );
+                println!(
+                    "  led on connect: {} (read-time, applied on next connect)",
+                    highlight_config(goals::format_led_on_connect(goals::load_led_on_connect()))
+                );
             }
 
             match DateTime::parse_from_rfc3339(&status.updated_at) {

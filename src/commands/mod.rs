@@ -3,6 +3,7 @@
 pub(crate) mod belt;
 pub(crate) mod common;
 pub(crate) mod diag;
+pub(crate) mod led;
 pub(crate) mod stats;
 pub(crate) mod status;
 pub(crate) mod zone;

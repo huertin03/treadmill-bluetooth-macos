@@ -44,7 +44,6 @@ use crate::commands::{
     run_status, run_zone,
 };
 use crate::control_command::ControlCommand;
-use crate::led::LedState;
 use crate::widget::{run_speed_widget, run_widget};
 
 #[derive(Parser)]
@@ -129,10 +128,10 @@ enum Commands {
         /// Target speed in km/h.
         kmh: f32,
     },
-    /// Toggle the ambient LED strip (`on` or `off`) (задача 058).
+    /// Toggle the ambient LED strip, or set the on-connect default (задачи 058/059).
     Led {
-        /// `on` or `off`.
-        state: LedState,
+        #[command(subcommand)]
+        action: LedAction,
     },
     /// Set target incline, percent. Kept for future hardware — this treadmill
     /// rejects it (see docs/tasks/003): no motorized incline over BLE.
@@ -179,6 +178,37 @@ enum Commands {
         #[command(subcommand)]
         action: Option<SpeedWidgetAction>,
     },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum LedAction {
+    /// Turn the ambient LED strip on.
+    On,
+    /// Turn the ambient LED strip off.
+    Off,
+    /// Persist the strip state applied on every treadmill connect (`off`/`on`),
+    /// or `none` to leave it alone. No argument prints the current value.
+    Default {
+        /// `off`, `on`, or `none`.
+        value: Option<LedDefaultValue>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum LedDefaultValue {
+    Off,
+    On,
+    None,
+}
+
+impl LedDefaultValue {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+            Self::None => "none",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -299,8 +329,8 @@ async fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("speed {kmh} km/h out of range"))?;
         return run_control(ControlCommand::Speed(speed)).await;
     }
-    if let Commands::Led { state } = command {
-        return run_control(ControlCommand::Led(state)).await;
+    if let Commands::Led { action } = command {
+        return crate::commands::led::run_led(action).await;
     }
 
     let adapter = scan::first_adapter().await?;
