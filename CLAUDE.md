@@ -70,8 +70,14 @@ This file is read by two different agents. Follow the branch that matches who yo
   compare/clamp — integer (`Eq`/`Ord`). Display — человекочитаемые km/h
   (`"3.2"`). Задача 054 / backlog 006; устраняет float-gap задачи 030.
 - `src/control.rs` — FTMS Control Point (start/stop/speed); `set_speed(CentiKmh)`.
-- `src/control_command.rs` — `ControlCommand` тип (`start`/`stop`/`speed:<kmh>`),
-  `Speed(CentiKmh)`; текстовый wire-формат очереди без изменений (задача 013/054).
+  Плюс `set_led(LedState)` (задача 058) — vendor write на `0xFFF2`, не Control Point.
+- `src/control_command.rs` — `ControlCommand` тип (`start`/`stop`/`speed:<kmh>` /
+  `led:on`/`led:off`), `Speed(CentiKmh)`, `Led(LedState)`; текстовый wire-формат
+  очереди без изменений (задача 013/054/058).
+- `src/led.rs` — Yesoul ambient LED strip (задача 058): `LedState` (`on`/`off`),
+  `led_frame` (`F0 10 02` / `F0 10 01`), GATT `0xFFF0`/`0xFFF2`. Не FitShow-кадр
+  (нет конверта `02 … xor 03`). Никогда не пишет `0xFF00`/`0xFF01`/`0xFAB*` и
+  не шлёт `F0 10 00`. Чистый, без BLE.
 - `src/presence.rs` — детекция присутствия: лента крутится, но шаги не растут →
   `AwayWhileRunning`. `observe(now, speed: Option<CentiKmh>, steps)` — время
   инъектируется (демон даёт `Instant::now()`, replay — синтез из `ts_ms`),
@@ -293,8 +299,8 @@ Wake the treadmill console if it stopped advertising. Reliability tasks
 ## Протокол
 
 Большинство дорожек отдают стандартный GATT-профиль **FTMS** (Fitness Machine Service, `0x1826`).
-Предполагаем его как основной путь. Возможен **vendor-specific** сервис Yesoul (как в их
-мобильном приложении) — это ещё не реверс-инжинирилось; см. `docs/research/`.
+Предполагаем его как основной путь. Vendor LED strip на `0xFFF0`/`0xFFF2` — задача 058
+(research 007); остальные vendor-каналы — см. `docs/research/`.
 
 Ключевые UUID:
 - `0x1826` — Fitness Machine Service
@@ -305,6 +311,8 @@ Wake the treadmill console if it stopped advertising. Reliability tasks
 - `0x2A37` — Heart Rate Measurement (notify)
 - `0x180F` — Battery Service (задача 026)
 - `0x2A19` — Battery Level (read)
+- `0xFFF0` — Yesoul vendor LED service (задача 058)
+- `0xFFF2` — LED write (`F0 10 02` on / `F0 10 01` off; no reply expected)
 
 ## Команды
 
@@ -322,6 +330,7 @@ cargo run -- default-speed  # показать расчётную дефолтн
 cargo run -- hr        # диагностика: подключиться к HR-датчику, печатать заряд + live bpm (docs/tasks/025,026)
 cargo run -- zone      # Zone Hold: статус (без аргумента) или on/off/setup/limits/target/list/add/edit/remove/mode (docs/tasks/027)
 cargo run -- speed-widget  # показ живой скорости в виджете: статус (без аргумента) или on/off (docs/tasks/029)
+cargo run -- led on|off    # ambient LED strip via daemon queue or direct BLE (задача 058)
 cargo run -- discover / sniff / fitshow-probe / fitshow-set  # reverse-engineering helpers (FitShow framing in fitshow.rs)
 cargo run -- --help    # полный список команд
 cargo test             # юнит-тесты

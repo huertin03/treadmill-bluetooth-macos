@@ -32,7 +32,8 @@ and can drive the treadmill (start / stop / target speed). 🏃💨
   widget and a sensor-battery check (`tm status`, low-battery glyph in the
   widget). Optional — everything degrades silently when no sensor is worn.
 - 🎯 **Step-goal milestones** — up to 3 daily goals with native macOS toasts.
-- 🎛️ **Control** — start / stop / set target speed on a live link.
+- 🎛️ **Control** — start / stop / set target speed, and toggle the ambient LED
+  strip, on a live link.
 - 🖥️ **tmux status-bar widget** — see the current workout in your status line
   (see [`scripts/tmux/`](./scripts/tmux)).
 - 🛟 **Self-healing daemon** — auto reconnect, watchdog, pause/resume speed
@@ -124,6 +125,7 @@ tm widget             # compact TSV of the current workout (for status bars)
 tm hr                 # diagnostic: connect to a heart-rate sensor, print battery + live bpm
 tm speed <kmh>        # set target speed on the live link
 tm start | tm stop    # start / stop the belt
+tm led on | tm led off  # toggle the ambient LED strip
 tm recompute-segments # rebuild workout segments from raw samples (no BLE)
 tm default-speed      # show the computed default start speed (no BLE)
 tm --help             # full command list

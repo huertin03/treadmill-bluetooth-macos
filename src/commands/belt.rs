@@ -1,4 +1,4 @@
-//! Belt control commands (`start`/`stop`/`speed`/`incline`) and FTMS dispatch.
+//! Belt control commands (`start`/`stop`/`speed`/`incline`/`led`) and dispatch.
 
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,7 @@ use tracing::info;
 use crate::commands::common::{daemon_process_alive, daemon_status_fresh};
 use crate::control;
 use crate::control_command::ControlCommand;
+use crate::led::LedState;
 use crate::scan;
 use crate::speed::CentiKmh;
 use crate::store;
@@ -22,7 +23,7 @@ pub(crate) const CONTROL_POLL_TIMEOUT: Duration = Duration::from_secs(8);
 /// How often the CLI re-reads the command row while waiting.
 pub(crate) const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Route a control command (start/stop/speed). When the daemon owns the live
+/// Route a control command (start/stop/speed/led). When the daemon owns the live
 /// BLE link, enqueue the command and wait for the daemon to run it — the CLI
 /// cannot open its own connection then, because the treadmill serves one
 /// central at a time and stops advertising while connected (задача 013). When
@@ -40,7 +41,7 @@ pub(crate) async fn run_control(command: ControlCommand) -> Result<()> {
         ControlCommand::Start => Command::Start,
         ControlCommand::Stop => Command::Stop,
         ControlCommand::Speed(speed) => Command::Speed(speed),
-        ControlCommand::Led(_) => bail!("LED strip write is not wired"),
+        ControlCommand::Led(state) => Command::Led(state),
     };
     run_command(&adapter, mapped).await?;
     println!("{}", describe_control_success(&command));
@@ -107,12 +108,13 @@ pub(crate) fn describe_control_success(command: &ControlCommand) -> String {
     }
 }
 
-/// A one-shot FTMS command issued over a fresh connection.
+/// A one-shot command issued over a fresh connection.
 pub(crate) enum Command {
     Start,
     Stop,
     Speed(CentiKmh),
     Incline(f32),
+    Led(LedState),
 }
 
 pub(crate) async fn run_command(adapter: &Adapter, command: Command) -> Result<()> {
@@ -123,6 +125,7 @@ pub(crate) async fn run_command(adapter: &Adapter, command: Command) -> Result<(
         Command::Stop => controller.stop().await?,
         Command::Speed(speed) => controller.set_speed(speed).await?,
         Command::Incline(percent) => controller.set_incline(percent).await?,
+        Command::Led(state) => controller.set_led(state).await?,
     }
     Ok(())
 }

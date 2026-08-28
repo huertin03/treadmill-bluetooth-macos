@@ -1,9 +1,9 @@
 # 004 — LED backlight control (vendor command via HCI capture)
 
-**Status:** unblocked 2026-08-28 — frame found by APK decompile, see
-[research 007](../research/007-yesoul-led-strip-protocol-apk.md); implementation is task
-[058](../tasks/058-led-strip-control.md). (History: deferred 2026-07-05; internet re-survey
-[006](../research/006-led-control-2026-resurvey.md) found nothing public.)
+**Status:** done → [058](../tasks/058-led-strip-control.md)
+(Frame found by APK decompile, [research 007](../research/007-yesoul-led-strip-protocol-apk.md).
+History: deferred 2026-07-05; internet re-survey [006](../research/006-led-control-2026-resurvey.md)
+found nothing public; unblocked 2026-08-28.)
 **Depends on:** [003](../tasks/003-yesoul-w2-pro-controller.md) findings.
 
 ## Context

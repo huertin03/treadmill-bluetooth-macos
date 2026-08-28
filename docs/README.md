@@ -9,8 +9,7 @@ Documentation-first workspace for `treadmill-bluetooth-macos`.
   - Reliability `035`–`047` + live smoke [048](tasks/048-live-smoke-035-047.md).
   - Architecture wave `049`–`056`: module splits (store/CLI/daemon/zone_hold),
     scan auto-recover, typed config apply, session state extract, `CentiKmh`.
-- `backlog/` — not-yet-scheduled work. `005`–`011` done (see each file);
-  open: [004](backlog/004-led-control-via-hci-capture.md) (hardware-blocked,
-  unblocked 2026-08-28 by [research 007](research/007-yesoul-led-strip-protocol-apk.md) — LED frame
-  from APK decompile; impl = task [058](tasks/058-led-strip-control.md), planned).
+  - [057](tasks/057-cyan-configurable-values.md) cyan knobs; [058](tasks/058-led-strip-control.md)
+    LED strip `tm led on|off`.
+- `backlog/` — not-yet-scheduled work. `004`–`011` done (see each file).
 - `ideas/` — loose ideas / future directions.

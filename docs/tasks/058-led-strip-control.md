@@ -1,6 +1,6 @@
 # 058 — LED strip control: `tm led on|off`
 
-**Status:** planned (2026-08-28). Closes backlog [004](../backlog/004-led-control-via-hci-capture.md).
+**Status:** done (2026-08-28). Closes backlog [004](../backlog/004-led-control-via-hci-capture.md).
 **Protocol:** [research 007](../research/007-yesoul-led-strip-protocol-apk.md) — decompiled from the official app.
 
 ## Goal

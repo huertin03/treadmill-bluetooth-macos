@@ -44,6 +44,7 @@ use crate::commands::{
     run_status, run_zone,
 };
 use crate::control_command::ControlCommand;
+use crate::led::LedState;
 use crate::widget::{run_speed_widget, run_widget};
 
 #[derive(Parser)]
@@ -127,6 +128,11 @@ enum Commands {
     Speed {
         /// Target speed in km/h.
         kmh: f32,
+    },
+    /// Toggle the ambient LED strip (`on` or `off`) (задача 058).
+    Led {
+        /// `on` or `off`.
+        state: LedState,
     },
     /// Set target incline, percent. Kept for future hardware — this treadmill
     /// rejects it (see docs/tasks/003): no motorized incline over BLE.
@@ -293,6 +299,9 @@ async fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("speed {kmh} km/h out of range"))?;
         return run_control(ControlCommand::Speed(speed)).await;
     }
+    if let Commands::Led { state } = command {
+        return run_control(ControlCommand::Led(state)).await;
+    }
 
     let adapter = scan::first_adapter().await?;
     match command {
@@ -323,7 +332,8 @@ async fn main() -> Result<()> {
         | Commands::SpeedWidget { .. }
         | Commands::Start
         | Commands::Stop
-        | Commands::Speed { .. } => {
+        | Commands::Speed { .. }
+        | Commands::Led { .. } => {
             unreachable!("handled above, before the adapter was opened")
         }
     }

@@ -6,6 +6,13 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `tm led on|off` — toggle the W2 Pro ambient LED strip over BLE (задача 058).
+  Routed through the daemon queue when it holds the link, otherwise a
+  direct connection. Does not persist a preference; the treadmill keeps
+  its own state.
+
 ## [0.3.0] — 2026-07-09
 
 ### Added
