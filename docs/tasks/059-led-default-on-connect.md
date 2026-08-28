@@ -60,3 +60,12 @@ Operator wants: strip **off by default** whenever the daemon connects.
 
 - Reading the strip state back (impossible on this firmware).
 - Sending `F0 10 00`.
+
+## Live verification log (2026-08-28)
+
+- `tm led default off` → config `led_on_connect = "off"`; daemon hot-reload logged
+  `loaded config (… + led_on_connect)`.
+- Strip manually **on**, then `launchctl kickstart -k` → daemon reconnected 21:22:16 and
+  logged `applied led_on_connect after treadmill connect state=off` — reconnect path verified.
+- Mains power-cycle path (strip re-lights by itself → daemon connects → dark) — same code
+  path; to be observed by the operator on the next power-cycle.
