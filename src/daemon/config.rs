@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::state::DaemonState;
+use crate::config;
 use crate::config_apply::{self, LiveConfig};
 use crate::default_speed;
-use crate::goals;
 use crate::speed::CentiKmh;
 use crate::store::Store;
 use crate::zone_session::ZoneSession;
@@ -47,7 +47,7 @@ pub(super) fn execute_config_effects(
             }
             ConfigEffect::LedOnConnectChanged => {
                 info!(
-                    led_on_connect = goals::format_led_on_connect(config.led_on_connect),
+                    led_on_connect = config::format_led_on_connect(config.led_on_connect),
                     "led_on_connect changed on disk — will apply on next treadmill connect"
                 );
             }
@@ -69,7 +69,7 @@ pub(super) fn execute_config_effects(
                     .and_then(CentiKmh::from_kmh_f32)
                     .or(Some(config.zone_hold.min_speed_kmh));
                 let zh_default =
-                    default_speed::compute_default_speed(store, goals::load_workout_gap_minutes())
+                    default_speed::compute_default_speed(store, config::load_workout_gap_minutes())
                         .ok()
                         .flatten()
                         .and_then(|d| CentiKmh::from_kmh_f32(d.kmh))

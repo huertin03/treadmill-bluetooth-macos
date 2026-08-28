@@ -7,7 +7,7 @@ use crate::SpeedWidgetAction;
 use crate::commands::common::{
     HR_STALE_THRESHOLD_S, WATCHDOG_STALE_THRESHOLD_S, highlight_config, zone_hold_config_path,
 };
-use crate::goals;
+use crate::config;
 use crate::store;
 
 /// Dispatch a `tm speed-widget` sub-action (задача 029). Read/write config
@@ -15,7 +15,7 @@ use crate::store;
 pub(crate) fn run_speed_widget(action: Option<SpeedWidgetAction>) -> Result<()> {
     match action {
         None => {
-            let enabled = goals::load_show_speed();
+            let enabled = config::load_show_speed();
             // `on`/`off` mirrors the config `show_speed` flag → cyan (задача 057).
             println!(
                 "Speed widget: {}",
@@ -30,7 +30,7 @@ pub(crate) fn run_speed_widget(action: Option<SpeedWidgetAction>) -> Result<()> 
 
 pub(crate) fn set_show_speed(enabled: bool) -> Result<()> {
     let path = zone_hold_config_path()?;
-    goals::upsert_top_level_key(&path, "show_speed", if enabled { "true" } else { "false" })?;
+    config::upsert_top_level_key(&path, "show_speed", if enabled { "true" } else { "false" })?;
     println!(
         "Speed widget {}.",
         highlight_config(if enabled { "enabled" } else { "disabled" })
@@ -82,7 +82,7 @@ pub(crate) fn run_widget() -> Result<()> {
     };
 
     let state = widget_state(status.presence_state.as_deref());
-    let gap_minutes = goals::load_workout_gap_minutes();
+    let gap_minutes = config::load_workout_gap_minutes();
 
     // Current (latest) workout: `walking_time_s` is the *credited* walking time —
     // the presence filter has already excluded step-away and paused stretches
@@ -230,7 +230,7 @@ pub(crate) fn widget_hr_zone_field(status: &store::DaemonStatus, widget_state: &
 /// the belt is stopped (`0` km/h — not worth showing, that's the common idle
 /// state).
 pub(crate) fn widget_speed_field(status: &store::DaemonStatus) -> String {
-    if !goals::load_show_speed() {
+    if !config::load_show_speed() {
         return String::new();
     }
     widget_speed_value(status, Utc::now().timestamp_millis())

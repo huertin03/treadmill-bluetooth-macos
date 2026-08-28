@@ -219,7 +219,7 @@ pub struct ResolvedZone {
 
 /// The full `[zone_hold]` configuration, parsed with per-user compiled-in
 /// defaults for any absent key — same absent-is-quiet/invalid-is-WARN
-/// convention as `goals::GapSetting`/`AutoPauseSetting`.
+/// convention as `crate::config`'s `GapSetting`/`AutoPauseSetting`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZoneHoldConfig {
     pub enabled: bool,

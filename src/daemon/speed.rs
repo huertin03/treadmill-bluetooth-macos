@@ -6,9 +6,9 @@ use tracing::{info, warn};
 
 use super::SPEED_RESTORE_TIMEOUT;
 use super::commands::ControlSource;
+use crate::config;
 use crate::control::Controller;
 use crate::default_speed;
-use crate::goals;
 use crate::notify;
 use crate::speed::CentiKmh;
 use crate::store::Store;
@@ -122,7 +122,7 @@ pub(super) async fn try_apply_default_speed(
         return None;
     }
 
-    let gap_minutes = goals::load_workout_gap_minutes();
+    let gap_minutes = config::load_workout_gap_minutes();
     let target = match default_speed::compute_default_speed(store, gap_minutes) {
         Ok(Some(default)) => match CentiKmh::from_kmh_f32(default.kmh) {
             Some(t) => t,

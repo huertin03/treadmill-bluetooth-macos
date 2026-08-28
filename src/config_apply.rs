@@ -8,6 +8,7 @@
 
 use std::time::{Duration, SystemTime};
 
+use crate::config;
 use crate::goals::{self, Goal};
 use crate::led::LedState;
 use crate::zone_hold::{self, ZoneHoldConfig};
@@ -143,16 +144,16 @@ pub fn reload_if_changed(
     last_mtime: &mut Option<SystemTime>,
     current: &LiveConfig,
 ) -> Option<ConfigDelta> {
-    let now_mtime = goals::config_mtime();
+    let now_mtime = config::config_mtime();
     if now_mtime == *last_mtime {
         return None;
     }
     *last_mtime = now_mtime;
     let loaded = LiveConfig {
         goals: goals::load_goals(),
-        auto_pause: goals::load_auto_pause(),
+        auto_pause: config::load_auto_pause(),
         zone_hold: zone_hold::load_zone_hold_config(),
-        led_on_connect: goals::load_led_on_connect(),
+        led_on_connect: config::load_led_on_connect(),
     };
     Some(diff(current, &loaded))
 }

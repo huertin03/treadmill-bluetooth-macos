@@ -27,6 +27,7 @@ use super::zone_write::execute_zone_write;
 
 use crate::activity::ActivityAccumulator;
 use crate::auto_pause::AutoPause;
+use crate::config;
 use crate::config_apply::{self, LiveConfig};
 use crate::control_command::ControlCommand;
 use crate::default_speed;
@@ -355,7 +356,7 @@ pub(super) async fn stream_with_presence(
                     // Default-speed DB scan only needed when Zone Hold will engage
                     // (задача 047) — skip the history query when disabled.
                     let zh_default = if config.zone_hold.enabled {
-                        default_speed::compute_default_speed(store, goals::load_workout_gap_minutes())
+                        default_speed::compute_default_speed(store, config::load_workout_gap_minutes())
                             .ok()
                             .flatten()
                             .and_then(|d| CentiKmh::from_kmh_f32(d.kmh))

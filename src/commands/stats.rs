@@ -4,8 +4,8 @@ use anyhow::Result;
 use chrono::{DateTime, Local, TimeZone, Utc};
 
 use crate::commands::common::{color_enabled, fmt_duration, format_local_time};
+use crate::config;
 use crate::default_speed;
-use crate::goals;
 use crate::store;
 
 /// Print today's accumulated stats, or every recorded day with `--all` —
@@ -14,7 +14,7 @@ pub(crate) fn run_stats(all: bool) -> Result<()> {
     let store = store::Store::open()?;
     // Read-time workout grouping threshold (задача 014); daily totals below are
     // unaffected (strictly calendar, straight from `daily_stats`).
-    let gap_minutes = goals::load_workout_gap_minutes();
+    let gap_minutes = config::load_workout_gap_minutes();
     if all {
         for day in store.all_stats()? {
             print_day(&store, &day, gap_minutes)?;
@@ -180,7 +180,7 @@ pub(crate) fn raw_hint(show: bool, value: &str) -> String {
 /// workout start, and which workout it was derived from (задача 016). Read-only.
 pub(crate) fn run_default_speed() -> Result<()> {
     let store = store::Store::open()?;
-    let gap_minutes = goals::load_workout_gap_minutes();
+    let gap_minutes = config::load_workout_gap_minutes();
     match default_speed::compute_default_speed(&store, gap_minutes)? {
         Some(default) => {
             println!("computed default speed: {:.1} km/h", default.kmh);

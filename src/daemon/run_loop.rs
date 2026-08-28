@@ -12,6 +12,7 @@ use tracing::{error, info, warn};
 use super::session::stream_with_presence;
 use super::state::{DaemonState, persist_daemon_status};
 use super::watchdog::Watchdog;
+use crate::config;
 use crate::config_apply::LiveConfig;
 use crate::goals;
 use crate::notify;
@@ -181,14 +182,14 @@ pub async fn run(adapter: &Adapter) -> Result<()> {
     // snapshot in sync (задачи 020/022). `auto_pause` is `None` when disabled.
     let mut live_config = LiveConfig {
         goals: goals::load_goals(),
-        auto_pause: goals::load_auto_pause(),
+        auto_pause: config::load_auto_pause(),
         zone_hold: zone_hold::load_zone_hold_config(),
-        led_on_connect: goals::load_led_on_connect(),
+        led_on_connect: config::load_led_on_connect(),
     };
     info!(
         goals = ?live_config.goals, auto_pause = ?live_config.auto_pause,
         zone_hold_enabled = live_config.zone_hold.enabled,
-        led_on_connect = goals::format_led_on_connect(live_config.led_on_connect),
+        led_on_connect = config::format_led_on_connect(live_config.led_on_connect),
         "loaded config (goals + idle-belt auto-pause + zone hold + led_on_connect)"
     );
     let watchdog = Watchdog::new();

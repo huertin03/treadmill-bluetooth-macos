@@ -6,6 +6,7 @@
 mod activity;
 mod auto_pause;
 mod commands;
+mod config;
 mod config_apply;
 mod control;
 mod control_command;

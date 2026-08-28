@@ -8,7 +8,7 @@ use crate::commands::common::{
     highlight_config,
 };
 use crate::commands::stats::print_workout_line;
-use crate::goals;
+use crate::config;
 use crate::store;
 use crate::widget::widget_hr_field;
 use crate::zone_hold;
@@ -300,11 +300,11 @@ pub(crate) fn run_status() -> Result<()> {
                 // itself, the daemon does not hold it; shown here for completeness.
                 println!(
                     "  workout gap: {} (read-time, applied when stats are read)",
-                    highlight_config(format!("{}m", goals::load_workout_gap_minutes()))
+                    highlight_config(format!("{}m", config::load_workout_gap_minutes()))
                 );
                 println!(
                     "  led on connect: {} (read-time, applied on next connect)",
-                    highlight_config(goals::format_led_on_connect(goals::load_led_on_connect()))
+                    highlight_config(config::format_led_on_connect(config::load_led_on_connect()))
                 );
             }
 
@@ -328,7 +328,7 @@ pub(crate) fn run_status() -> Result<()> {
     println!();
     println!("today's workouts:");
     let today = Local::now().format("%Y-%m-%d").to_string();
-    let workouts = store.workouts_for(&today, goals::load_workout_gap_minutes())?;
+    let workouts = store.workouts_for(&today, config::load_workout_gap_minutes())?;
     if workouts.is_empty() {
         println!("  (none yet today)");
     } else {

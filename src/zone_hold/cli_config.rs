@@ -26,7 +26,7 @@ pub fn upsert_zone_hold_keys(path: &Path, updates: &[(&str, String)]) -> anyhow:
             lines.push(format!("{key} = {value}"));
         }
         lines.push(String::new());
-        crate::goals::write_atomic(path, lines.join("\n"))?;
+        crate::config::write_atomic(path, lines.join("\n"))?;
         return Ok(());
     };
 
@@ -48,7 +48,7 @@ pub fn upsert_zone_hold_keys(path: &Path, updates: &[(&str, String)]) -> anyhow:
         }
     }
 
-    crate::goals::write_atomic(path, lines.join("\n") + "\n")?;
+    crate::config::write_atomic(path, lines.join("\n") + "\n")?;
     Ok(())
 }
 
@@ -113,7 +113,7 @@ pub fn replace_zones(path: &Path, zones: &[ZoneDef]) -> anyhow::Result<()> {
         lines.push(String::new());
     }
 
-    crate::goals::write_atomic(path, lines.join("\n"))?;
+    crate::config::write_atomic(path, lines.join("\n"))?;
     Ok(())
 }
 
