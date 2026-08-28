@@ -72,6 +72,8 @@ pub(super) async fn process_control_commands(
     }
 
     let source = ControlSource::Cli;
+    // Only a CLI Speed opens the Zone Hold override window; Led/Start/Stop
+    // must not look like a speed restore.
     let was_speed = matches!(queued.command, ControlCommand::Speed(_));
     let command_wire = queued.command.to_wire();
     match tokio::time::timeout(
@@ -132,6 +134,6 @@ pub(super) async fn execute_control_command(
         ControlCommand::Start => controller.start().await,
         ControlCommand::Stop => controller.stop().await,
         ControlCommand::Speed(kmh) => controller.set_speed(kmh).await,
-        ControlCommand::Led(_) => anyhow::bail!("LED strip write is not wired"),
+        ControlCommand::Led(state) => controller.set_led(state).await,
     }
 }

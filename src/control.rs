@@ -94,7 +94,6 @@ impl<'a> Controller<'a> {
     /// characteristic lacks that property (this unit's GATT snapshot advertises
     /// plain `write`). No indication/notify reply is expected — unlike Control
     /// Point opcodes — so the bounded wait is around the ATT write itself.
-    #[allow(dead_code)] // dispatched from daemon execute_control_command (задача 058)
     pub async fn set_led(&self, state: LedState) -> Result<()> {
         let Some(led_char) = self
             .peripheral
