@@ -14,6 +14,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 
+use crate::led::LedState;
 use crate::speed::CentiKmh;
 
 /// How old a queued command may get before the daemon refuses to execute it.
@@ -26,7 +27,7 @@ use crate::speed::CentiKmh;
 /// than executed behind the operator's back.
 pub const CONTROL_STALE_THRESHOLD: Duration = Duration::from_secs(30);
 
-/// A one-shot FTMS control command routed through the queue. `Incline` is
+/// A one-shot control command routed through the queue. `Incline` is
 /// intentionally absent — the daemon has no incline path and this device
 /// rejects it anyway (see `docs/tasks/003`); `tm incline` stays direct-BLE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,17 +35,19 @@ pub enum ControlCommand {
     Start,
     Stop,
     Speed(CentiKmh),
+    Led(LedState),
 }
 
 impl ControlCommand {
     /// Compact string persisted in `control_commands.command`: `start`,
-    /// `stop`, or `speed:<kmh>` (e.g. `speed:2.5`). Human-readable km/h
-    /// outside; [`CentiKmh`] inside.
+    /// `stop`, `speed:<kmh>` (e.g. `speed:2.5`), or `led:on`/`led:off`.
+    /// Human-readable km/h outside; [`CentiKmh`] inside.
     pub fn to_wire(self) -> String {
         match self {
             Self::Start => "start".to_string(),
             Self::Stop => "stop".to_string(),
             Self::Speed(speed) => format!("speed:{speed}"),
+            Self::Led(state) => format!("led:{state}"),
         }
     }
 
@@ -56,6 +59,12 @@ impl ControlCommand {
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
             other => {
+                if let Some(raw) = other.strip_prefix("led:") {
+                    let state: LedState = raw.parse().with_context(|| {
+                        format!("unknown LED state in {other:?}; expected led:on or led:off")
+                    })?;
+                    return Ok(Self::Led(state));
+                }
                 let raw = other
                     .strip_prefix("speed:")
                     .with_context(|| format!("unknown control command wire form: {other:?}"))?;
@@ -90,6 +99,8 @@ mod tests {
             ControlCommand::Start,
             ControlCommand::Stop,
             ControlCommand::Speed(CentiKmh::from_wire(250)),
+            ControlCommand::Led(LedState::On),
+            ControlCommand::Led(LedState::Off),
         ] {
             let parsed = ControlCommand::parse(&cmd.to_wire()).expect("round-trips");
             assert_eq!(parsed, cmd);
@@ -104,6 +115,8 @@ mod tests {
         );
         assert_eq!(ControlCommand::Start.to_wire(), "start");
         assert_eq!(ControlCommand::Stop.to_wire(), "stop");
+        assert_eq!(ControlCommand::Led(LedState::On).to_wire(), "led:on");
+        assert_eq!(ControlCommand::Led(LedState::Off).to_wire(), "led:off");
     }
 
     #[test]
@@ -111,6 +124,9 @@ mod tests {
         assert!(ControlCommand::parse("frobnicate").is_err());
         assert!(ControlCommand::parse("speed:fast").is_err());
         assert!(ControlCommand::parse("speed:").is_err());
+        assert!(ControlCommand::parse("led:").is_err());
+        assert!(ControlCommand::parse("led:maybe").is_err());
+        assert!(ControlCommand::parse("led").is_err());
     }
 
     #[test]

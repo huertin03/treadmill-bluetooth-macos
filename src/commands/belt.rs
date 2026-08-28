@@ -40,6 +40,7 @@ pub(crate) async fn run_control(command: ControlCommand) -> Result<()> {
         ControlCommand::Start => Command::Start,
         ControlCommand::Stop => Command::Stop,
         ControlCommand::Speed(speed) => Command::Speed(speed),
+        ControlCommand::Led(_) => bail!("LED strip write is not wired"),
     };
     run_command(&adapter, mapped).await?;
     println!("{}", describe_control_success(&command));
@@ -102,6 +103,7 @@ pub(crate) fn describe_control_success(command: &ControlCommand) -> String {
         ControlCommand::Start => "belt started".to_string(),
         ControlCommand::Stop => "belt stopped".to_string(),
         ControlCommand::Speed(speed) => format!("speed set to {speed} km/h"),
+        ControlCommand::Led(state) => format!("led strip turned {state}"),
     }
 }
 

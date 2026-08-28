@@ -14,6 +14,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use anyhow::{Error, bail};
 use uuid::Uuid;
 
 /// Yesoul vendor LED service — `0xFFF0`.
@@ -48,13 +49,13 @@ impl fmt::Display for LedState {
 }
 
 impl FromStr for LedState {
-    type Err = String;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "on" => Ok(Self::On),
             "off" => Ok(Self::Off),
-            other => Err(format!("unknown LED state {other:?}; expected on or off")),
+            other => bail!("unknown LED state {other:?}; expected on or off"),
         }
     }
 }

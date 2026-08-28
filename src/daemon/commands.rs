@@ -132,5 +132,6 @@ pub(super) async fn execute_control_command(
         ControlCommand::Start => controller.start().await,
         ControlCommand::Stop => controller.stop().await,
         ControlCommand::Speed(kmh) => controller.set_speed(kmh).await,
+        ControlCommand::Led(_) => anyhow::bail!("LED strip write is not wired"),
     }
 }
