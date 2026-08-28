@@ -10,6 +10,6 @@ Documentation-first workspace for `treadmill-bluetooth-macos`.
   - Architecture wave `049`–`056`: module splits (store/CLI/daemon/zone_hold),
     scan auto-recover, typed config apply, session state extract, `CentiKmh`.
   - [057](tasks/057-cyan-configurable-values.md) cyan knobs; [058](tasks/058-led-strip-control.md)
-    LED strip `tm led on|off`.
+    LED strip `tm led on|off`; [059](tasks/059-led-default-on-connect.md) strip off by default on connect (planned).
 - `backlog/` — not-yet-scheduled work. `004`–`011` done (see each file).
 - `ideas/` — loose ideas / future directions.
