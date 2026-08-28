@@ -77,7 +77,8 @@ This file is read by two different agents. Follow the branch that matches who yo
 - `src/led.rs` — Yesoul ambient LED strip (задача 058): `LedState` (`on`/`off`),
   `led_frame` (`F0 10 02` / `F0 10 01`), GATT `0xFFF0`/`0xFFF2`. Не FitShow-кадр
   (нет конверта `02 … xor 03`). Никогда не пишет `0xFF00`/`0xFF01`/`0xFAB*` и
-  не шлёт `F0 10 00`. Чистый, без BLE.
+  не шлёт `F0 10 00`. Чистый, без BLE. On-connect default (`led_on_connect`) —
+  задача 059: loader в `goals.rs`, apply в `src/daemon/led.rs`.
 - `src/presence.rs` — детекция присутствия: лента крутится, но шаги не растут →
   `AwayWhileRunning`. `observe(now, speed: Option<CentiKmh>, steps)` — время
   инъектируется (демон даёт `Instant::now()`, replay — синтез из `ts_ms`),
@@ -110,8 +111,9 @@ This file is read by two different agents. Follow the branch that matches who yo
   ScanRecovery/panic hook), `session` (`stream_with_presence` thin wiring,
   задача 053: arm → метод session-структуры → side-effect), `state`
   (`DaemonState` + tolerate/persist), `watchdog`, `commands` (control queue),
-  `speed` (restore/default writes), `hr` (spawned HR connect), `config`
-  (hot-reload effects), `zone_write` (`ZoneWrite` → BLE). Открывает/продлевает
+  `speed` (restore/default writes), `led` (on-connect strip write, задача 059),
+  `hr` (spawned HR connect), `config` (hot-reload effects), `zone_write`
+  (`ZoneWrite` → BLE). Открывает/продлевает
   **сегмент** активности на зачтённом шаге и закрывает его (in-memory
   `current_segment=None`) в presence-переходе при уходе из `Walking` (задача 014);
   на resume после паузы авто-восстанавливает pre-pause скорость ленты через
@@ -331,6 +333,7 @@ cargo run -- hr        # диагностика: подключиться к HR-
 cargo run -- zone      # Zone Hold: статус (без аргумента) или on/off/setup/limits/target/list/add/edit/remove/mode (docs/tasks/027)
 cargo run -- speed-widget  # показ живой скорости в виджете: статус (без аргумента) или on/off (docs/tasks/029)
 cargo run -- led on|off    # ambient LED strip via daemon queue or direct BLE (задача 058)
+cargo run -- led default   # on-connect strip default: status (no arg) or off|on|none (задача 059)
 cargo run -- discover / sniff / fitshow-probe / fitshow-set  # reverse-engineering helpers (FitShow framing in fitshow.rs)
 cargo run -- --help    # полный список команд
 cargo test             # юнит-тесты
@@ -366,7 +369,7 @@ mirror того же порядка — **fmt валится чаще всего
 `config.json`/`goals.json`) — ради комментариев: дефолты в примере видны
 закомментированными строками. Формат — см. `config/config.example.toml`:
 `goals = [8000, 10000, 12000]` + опциональные `workout_gap_minutes` /
-`auto_pause_minutes` / `show_speed` / `[zone_hold]` (задача 027, см.
+`auto_pause_minutes` / `show_speed` / `led_on_connect` / `[zone_hold]` (задача 027, см.
 `src/zone_hold/` выше — секцию обычно пишет `tm zone on`/`setup`, не
 руки). Опциональный
 `workout_gap_minutes` (задача 014, дефолт 15) —
@@ -377,7 +380,12 @@ read-time порог: соседние сегменты активности с 
 паузу; дальше лента гаснет своим встроенным механизмом. Опциональный
 `show_speed` (задача 029, дефолт `false`) — показ живой скорости ленты
 (км/ч) в tmux-виджете; обычно управляется через `tm speed-widget on`/`off`,
-не руки. Отсутствует/битый ключ →
+не руки. Опциональный `led_on_connect` (задача 059, `"off"` | `"on"`,
+absent/`"none"` — ничего не делать) — состояние ambient LED strip, которое
+демон переотправляет на каждом коннекте (W2 Pro включает ленту после
+power-cycle с розетки; приложение делает то же). Обычно `tm led default
+off`/`on`/`none`, не руки; hot-reload подхватывает ключ, пишет в ленту
+только на следующем коннекте. Отсутствует/битый ключ →
 дефолт (absent — тихо, т.к. `widget` читает раз в 2 с; невалидное значение →
 WARN). Резолвинг (задача 023, один путь): env `TREADMILL_CONFIG` →
 `$HOME/.config/.../config.toml` → вшитые дефолты `[8000,10000,12000]` (JSON- и

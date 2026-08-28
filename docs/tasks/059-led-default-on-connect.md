@@ -1,6 +1,6 @@
 # 059 — LED strip default state on connect (`led_on_connect`)
 
-**Status:** planned (2026-08-28). Follows [058](058-led-strip-control.md).
+**Status:** done, pending live verification (2026-08-28). Follows [058](058-led-strip-control.md).
 
 ## Context
 

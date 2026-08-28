@@ -8,6 +8,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `led_on_connect` / `tm led default [off|on|none]` — persist a preferred
+  ambient LED strip state and re-apply it on every daemon connect (задача
+  059). The W2 Pro turns the strip back on after a mains power-cycle; the
+  official app does the same. Absent or `"none"` keeps the leave-it-alone
+  behaviour. Reload updates the in-memory value only (takes effect at the
+  next connect); `tm status` shows the read-time value.
 - `tm led on|off` — toggle the W2 Pro ambient LED strip over BLE (задача 058).
   Routed through the daemon queue when it holds the link, otherwise a
   direct connection. Does not persist a preference; the treadmill keeps
