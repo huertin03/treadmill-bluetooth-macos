@@ -19,6 +19,7 @@ use super::hr::{
     HR_BATTERY_CHECK_INTERVAL, HR_RECONNECT_INTERVAL, HrConnectOutcome, HrNotificationStream,
     spawn_hr_connect_attempt,
 };
+use super::led::try_apply_led_on_connect;
 use super::speed::{try_apply_default_speed, try_restore_speed};
 use super::state::{DaemonState, persist_daemon_status, tolerate_db_write};
 use super::watchdog::Watchdog;
@@ -65,6 +66,11 @@ pub(super) async fn stream_with_presence(
     config: &mut LiveConfig,
     db_persist_failures: &mut u32,
 ) -> Result<()> {
+    // Apply `led_on_connect` once per BLE session (задача 059). A reconnect
+    // after a drop re-enters here; the write is idempotent. Failure is
+    // swallowed inside the helper — the strip is cosmetic.
+    try_apply_led_on_connect(peripheral, config.led_on_connect).await;
+
     scan::subscribe_treadmill_data(peripheral).await?;
     scan::subscribe_treadmill_status(peripheral).await?;
     // Bounded like every other CoreBluetooth call — see задача 007.

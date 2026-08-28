@@ -87,6 +87,7 @@
 mod commands;
 mod config;
 mod hr;
+mod led;
 mod run_loop;
 mod session;
 mod speed;
