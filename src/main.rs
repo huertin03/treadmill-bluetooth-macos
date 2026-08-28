@@ -274,6 +274,7 @@ enum ZoneAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    restore_default_sigpipe();
     init_tracing();
 
     let command = Cli::parse().command.unwrap_or(Commands::Scan);
@@ -369,6 +370,17 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Rust's runtime ignores SIGPIPE, so `println!` into a closed pipe
+/// (`tm status | head`) panics instead of ending the process the way every
+/// other Unix CLI does. Restore the default disposition before anything can
+/// write to stdout — including clap's `--help`/`--version`.
+fn restore_default_sigpipe() {
+    // Safety: resetting SIGPIPE to SIG_DFL is the POSIX default for a new
+    // process; no handler is installed, so there is no concurrent-handler
+    // race. Must run before any stdout write.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
 }
 
 fn init_tracing() {
