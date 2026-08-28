@@ -1,6 +1,6 @@
 # 058 — LED strip control: `tm led on|off`
 
-**Status:** done (2026-08-28). Closes backlog [004](../backlog/004-led-control-via-hci-capture.md).
+**Status:** done, **live-verified 2026-08-28 20:44** (operator: `tm led off` → strip dark, `tm led on` → strip lit; both via the daemon queue, ids 1/2, RequestControl `0x00` ack'd, no Control-Point side effects). Closes backlog [004](../backlog/004-led-control-via-hci-capture.md).
 **Protocol:** [research 007](../research/007-yesoul-led-strip-protocol-apk.md) — decompiled from the official app.
 
 ## Goal
@@ -52,3 +52,11 @@ expected): `F0 10 02` = on, `F0 10 01` = off. Never write `0xFF00`/`0xFF01`.
 - Strip colour via `d18d2c10` extension frames (documented in 007; separate
   idea).
 - Incline (RF-only, задача 003 verdict).
+
+## Live verification log (2026-08-28)
+
+- Daemon on the new binary connected at 20:44:17 after the console was woken.
+- `tm led off` → `led strip turned off` (queue id 1) — operator confirmed the strip went dark.
+- `tm led on` → `led strip turned on` (queue id 2) — operator confirmed the strip lit.
+- `F0 10 00` was **not** sent; not needed. The treadmill accepted the write with
+  `WriteType::WithResponse` (this unit's `0xFFF2` advertises plain `write`).
