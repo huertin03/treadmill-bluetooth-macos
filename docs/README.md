@@ -11,5 +11,6 @@ Documentation-first workspace for `treadmill-bluetooth-macos`.
     scan auto-recover, typed config apply, session state extract, `CentiKmh`.
 - `backlog/` — not-yet-scheduled work. `005`–`011` done (see each file);
   open: [004](backlog/004-led-control-via-hci-capture.md) (hardware-blocked,
-  deferred by operator; 2026-08 re-survey [research 006](research/006-led-control-2026-resurvey.md)).
+  unblocked 2026-08-28 by [research 007](research/007-yesoul-led-strip-protocol-apk.md) — LED frame
+  from APK decompile; impl = task [058](tasks/058-led-strip-control.md), planned).
 - `ideas/` — loose ideas / future directions.
