@@ -183,11 +183,13 @@ pub async fn run(adapter: &Adapter) -> Result<()> {
         goals: goals::load_goals(),
         auto_pause: goals::load_auto_pause(),
         zone_hold: zone_hold::load_zone_hold_config(),
+        led_on_connect: goals::load_led_on_connect(),
     };
     info!(
         goals = ?live_config.goals, auto_pause = ?live_config.auto_pause,
         zone_hold_enabled = live_config.zone_hold.enabled,
-        "loaded config (goals + idle-belt auto-pause + zone hold)"
+        led_on_connect = goals::format_led_on_connect(live_config.led_on_connect),
+        "loaded config (goals + idle-belt auto-pause + zone hold + led_on_connect)"
     );
     let watchdog = Watchdog::new();
     watchdog.spawn_monitor();

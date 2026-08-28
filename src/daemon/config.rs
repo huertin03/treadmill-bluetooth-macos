@@ -45,6 +45,12 @@ pub(super) fn execute_config_effects(
                     "auto-pause threshold changed on disk — reloaded without a daemon restart"
                 );
             }
+            ConfigEffect::LedOnConnectChanged => {
+                info!(
+                    led_on_connect = goals::format_led_on_connect(config.led_on_connect),
+                    "led_on_connect changed on disk — will apply on next treadmill connect"
+                );
+            }
             ConfigEffect::ZoneDisengage(DisengageReason::DisabledInConfig) => {
                 info!("zone hold: disabled in config — disengaging mid-session");
                 zone.disengage(state);

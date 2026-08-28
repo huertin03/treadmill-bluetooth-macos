@@ -9,24 +9,31 @@
 use std::time::{Duration, SystemTime};
 
 use crate::goals::{self, Goal};
+use crate::led::LedState;
 use crate::zone_hold::{self, ZoneHoldConfig};
 
-/// The three hot-reloadable config values (moved from `daemon.rs` verbatim).
+/// The hot-reloadable config values (moved from `daemon.rs` verbatim).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiveConfig {
     pub goals: Vec<Goal>,
     pub auto_pause: Option<Duration>,
     pub zone_hold: ZoneHoldConfig,
+    /// Strip state to write on the next treadmill connect (задача 059).
+    /// `None` = leave the treadmill's current state. Reload updates the
+    /// field only — it must not write to the strip mid-session.
+    pub led_on_connect: Option<LedState>,
 }
 
 /// What actually changed on disk. `None` field = unchanged.
 /// `auto_pause` is `Option<Option<Duration>>`: outer = "changed?",
-/// inner = the new value (`None` = auto-pause disabled).
+/// inner = the new value (`None` = auto-pause disabled). Same nesting
+/// for `led_on_connect` (`None` inner = no strip write on connect).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigDelta {
     pub goals: Option<Vec<Goal>>,
     pub auto_pause: Option<Option<Duration>>,
     pub zone_hold: Option<ZoneHoldConfig>,
+    pub led_on_connect: Option<Option<LedState>>,
 }
 
 impl ConfigDelta {
@@ -34,7 +41,10 @@ impl ConfigDelta {
     /// still refreshes the `tm status` snapshot).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.goals.is_none() && self.auto_pause.is_none() && self.zone_hold.is_none()
+        self.goals.is_none()
+            && self.auto_pause.is_none()
+            && self.zone_hold.is_none()
+            && self.led_on_connect.is_none()
     }
 }
 
@@ -93,6 +103,9 @@ pub enum ConfigEffect {
         /// Stable field names that differed (for the INFO line).
         fields: Vec<&'static str>,
     },
+    /// `led_on_connect` changed — executor logs old→new. Takes effect at the
+    /// next treadmill connect; reload must not write to the strip.
+    LedOnConnectChanged,
 }
 
 /// Pure diff old vs new (each field via `PartialEq`, as the reload branch did).
@@ -110,6 +123,11 @@ pub fn diff(old: &LiveConfig, new: &LiveConfig) -> ConfigDelta {
         },
         zone_hold: if old.zone_hold != new.zone_hold {
             Some(new.zone_hold.clone())
+        } else {
+            None
+        },
+        led_on_connect: if old.led_on_connect != new.led_on_connect {
+            Some(new.led_on_connect)
         } else {
             None
         },
@@ -134,6 +152,7 @@ pub fn reload_if_changed(
         goals: goals::load_goals(),
         auto_pause: goals::load_auto_pause(),
         zone_hold: zone_hold::load_zone_hold_config(),
+        led_on_connect: goals::load_led_on_connect(),
     };
     Some(diff(current, &loaded))
 }
@@ -157,6 +176,11 @@ pub fn apply_config(
     if let Some(auto_pause) = delta.auto_pause {
         config.auto_pause = auto_pause;
         effects.push(ConfigEffect::AutoPauseChanged);
+    }
+
+    if let Some(led_on_connect) = delta.led_on_connect {
+        config.led_on_connect = led_on_connect;
+        effects.push(ConfigEffect::LedOnConnectChanged);
     }
 
     if let Some(new_zh) = delta.zone_hold {
@@ -290,10 +314,11 @@ fn effect_rank(effect: &ConfigEffect) -> u8 {
         ConfigEffect::ZoneDisengage(_) => 0,
         ConfigEffect::GoalsChanged => 1,
         ConfigEffect::AutoPauseChanged => 2,
-        ConfigEffect::ZoneConfigChanged { .. } => 3,
-        ConfigEffect::ZoneReResolve => 4,
-        ConfigEffect::ZoneWarmupRetarget { .. } => 5,
-        ConfigEffect::ZoneEngage => 6,
+        ConfigEffect::LedOnConnectChanged => 3,
+        ConfigEffect::ZoneConfigChanged { .. } => 4,
+        ConfigEffect::ZoneReResolve => 5,
+        ConfigEffect::ZoneWarmupRetarget { .. } => 6,
+        ConfigEffect::ZoneEngage => 7,
     }
 }
 
@@ -315,6 +340,7 @@ mod tests {
             goals: goals(&[8000, 10000, 12000]),
             auto_pause: Some(Duration::from_secs(5 * 60)),
             zone_hold: zh,
+            led_on_connect: None,
         }
     }
 
@@ -630,16 +656,19 @@ mod tests {
                     } else {
                         None
                     },
+                    led_on_connect: None,
                 },
                 ExtraDelta::Goals => ConfigDelta {
                     goals: Some(new_goals.clone()),
                     auto_pause: None,
                     zone_hold: None,
+                    led_on_connect: None,
                 },
                 ExtraDelta::AutoPause => ConfigDelta {
                     goals: None,
                     auto_pause: Some(new_auto_pause),
                     zone_hold: None,
+                    led_on_connect: None,
                 },
             };
             // Capture for the helper — need old zone before apply when comparing.
@@ -697,6 +726,7 @@ mod tests {
                 goals: None,
                 auto_pause: None,
                 zone_hold: Some(new_zh.clone()),
+                led_on_connect: None,
             },
             &snap(PhaseKind::Hold, true),
         );
@@ -719,6 +749,7 @@ mod tests {
         assert!(d.goals.is_none());
         assert!(d.auto_pause.is_none());
         assert!(d.zone_hold.is_none());
+        assert!(d.led_on_connect.is_none());
     }
 
     #[test]
@@ -731,6 +762,7 @@ mod tests {
         assert_eq!(d.goals, Some(only_goals.goals.clone()));
         assert!(d.auto_pause.is_none());
         assert!(d.zone_hold.is_none());
+        assert!(d.led_on_connect.is_none());
 
         let mut only_ap = base.clone();
         only_ap.auto_pause = None;
@@ -738,6 +770,7 @@ mod tests {
         assert!(d.goals.is_none());
         assert_eq!(d.auto_pause, Some(None));
         assert!(d.zone_hold.is_none());
+        assert!(d.led_on_connect.is_none());
 
         let mut only_zh = base.clone();
         only_zh.zone_hold.enabled = true;
@@ -746,15 +779,26 @@ mod tests {
         assert!(d.goals.is_none());
         assert!(d.auto_pause.is_none());
         assert_eq!(d.zone_hold.as_ref().map(|z| z.warmup_minutes), Some(7));
+        assert!(d.led_on_connect.is_none());
+
+        let mut only_led = base.clone();
+        only_led.led_on_connect = Some(crate::led::LedState::Off);
+        let d = diff(&base, &only_led);
+        assert!(d.goals.is_none());
+        assert!(d.auto_pause.is_none());
+        assert!(d.zone_hold.is_none());
+        assert_eq!(d.led_on_connect, Some(Some(crate::led::LedState::Off)));
 
         let mut all = base.clone();
         all.goals = goals(&[2000, 4000]);
         all.auto_pause = Some(Duration::from_secs(60));
         all.zone_hold.max_speed_kmh = crate::speed::CentiKmh::from_wire(900);
+        all.led_on_connect = Some(crate::led::LedState::On);
         let d = diff(&base, &all);
         assert!(d.goals.is_some());
         assert!(d.auto_pause.is_some());
         assert!(d.zone_hold.is_some());
+        assert!(d.led_on_connect.is_some());
         assert!(!d.is_empty());
     }
 
@@ -784,6 +828,7 @@ mod tests {
                 goals: None,
                 auto_pause: None,
                 zone_hold: Some(new_zh),
+                led_on_connect: None,
             },
             &snap(PhaseKind::Ramp, true),
         );
@@ -853,6 +898,7 @@ mod tests {
                 goals: Some(goals(&[1000])),
                 auto_pause: Some(None),
                 zone_hold: Some(new_zh),
+                led_on_connect: None,
             },
             &snap(PhaseKind::Off, true),
         );
@@ -877,6 +923,7 @@ mod tests {
                 goals: Some(goals(&[1000])),
                 auto_pause: Some(None),
                 zone_hold: Some(new_zh),
+                led_on_connect: None,
             },
             &snap(PhaseKind::Hold, true),
         );
@@ -888,5 +935,35 @@ mod tests {
                 ConfigEffect::AutoPauseChanged,
             ]
         );
+    }
+
+    #[test]
+    fn apply_config_led_on_connect_updates_field_without_zone_effects() {
+        let mut config = live(zh_enabled());
+        let effects = apply_config(
+            &mut config,
+            ConfigDelta {
+                goals: None,
+                auto_pause: None,
+                zone_hold: None,
+                led_on_connect: Some(Some(crate::led::LedState::Off)),
+            },
+            &snap(PhaseKind::Hold, true),
+        );
+        assert_eq!(effects, vec![ConfigEffect::LedOnConnectChanged]);
+        assert_eq!(config.led_on_connect, Some(crate::led::LedState::Off));
+
+        let effects = apply_config(
+            &mut config,
+            ConfigDelta {
+                goals: None,
+                auto_pause: None,
+                zone_hold: None,
+                led_on_connect: Some(None),
+            },
+            &snap(PhaseKind::Hold, true),
+        );
+        assert_eq!(effects, vec![ConfigEffect::LedOnConnectChanged]);
+        assert_eq!(config.led_on_connect, None);
     }
 }

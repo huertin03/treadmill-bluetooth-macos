@@ -27,6 +27,12 @@ goals = [8000, 10000, 12000]
 # either works, this is just a plain boolean.
 # show_speed = false
 
+# Re-apply this LED strip state on every daemon connect. The W2 Pro turns the
+# strip back on after a mains power-cycle; the official app does the same
+# compensation. Absent or `"none"` leaves the strip alone (today's behaviour).
+# Toggle with `tm led default off`/`on`/`none`.
+# led_on_connect = "off"
+
 # Zone Hold (задача 027): closed-loop mode that auto-adjusts belt speed off a
 # worn heart-rate sensor (задача 025) to hold a target heart-rate zone during
 # desk walking. Off by default — turn it on with `tm zone on` (interactive
