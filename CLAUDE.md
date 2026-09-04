@@ -71,6 +71,9 @@ This file is read by two different agents. Follow the branch that matches who yo
   (`"3.2"`). Задача 054 / backlog 006; устраняет float-gap задачи 030.
 - `src/control.rs` — FTMS Control Point (start/stop/speed); `set_speed(CentiKmh)`.
   Плюс `set_led(LedState)` (задача 058) — vendor write на `0xFFF2`, не Control Point.
+  `Off` всегда праймится `On` + 100 мс (задача 061): прошивка реагирует только на
+  переход своего LED-флага, который сбрасывается в off при power-cycle, пока
+  лента физически загорается — голый `off` тогда молча no-op.
 - `src/control_command.rs` — `ControlCommand` тип (`start`/`stop`/`speed:<kmh>` /
   `led:on`/`led:off`), `Speed(CentiKmh)`, `Led(LedState)`; текстовый wire-формат
   очереди без изменений (задача 013/054/058).

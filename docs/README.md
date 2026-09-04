@@ -12,6 +12,8 @@ Documentation-first workspace for `treadmill-bluetooth-macos`.
   - [057](tasks/057-cyan-configurable-values.md) cyan knobs; [058](tasks/058-led-strip-control.md)
     LED strip `tm led on|off`; [059](tasks/059-led-default-on-connect.md) strip
     off by default on connect (**done**, live-verified); [060](tasks/060-hygiene-broken-pipe-goals-split.md)
-    hygiene: SIGPIPE panic on piped output + `goals.rs` split (**done**).
+    hygiene: SIGPIPE panic on piped output + `goals.rs` split (**done**);
+    [061](tasks/061-led-off-prime-after-power-cycle.md) LED `off` no-op after
+    power-cycle → prime with `on` (**done**, pending live).
 - `backlog/` — not-yet-scheduled work. `004`–`011` done (see each file).
 - `ideas/` — loose ideas / future directions.

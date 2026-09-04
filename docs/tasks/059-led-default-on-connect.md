@@ -69,3 +69,6 @@ Operator wants: strip **off by default** whenever the daemon connects.
   logged `applied led_on_connect after treadmill connect state=off` — reconnect path verified.
 - Mains power-cycle path (strip re-lights by itself → daemon connects → dark) — same code
   path; to be observed by the operator on the next power-cycle.
+- **2026-09-04:** power-cycle path observed — write logged as applied, strip stayed lit.
+  Root cause + fix in [061](061-led-off-prime-after-power-cycle.md) (firmware LED flag
+  resets on power-cycle; `off` now primed with `on`).

@@ -38,6 +38,9 @@ const RESULT_SUCCESS: u8 = 0x01;
 const STOP_PARAM: u8 = 0x01;
 /// How long to wait for the indicated response to a command.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Gap between the priming `On` and the real `Off` LED write (задача 061);
+/// matches the app's own 100 ms spacing between consecutive `0xFFF2` writes.
+const LED_PRIME_DELAY: Duration = Duration::from_millis(100);
 
 /// Handle over an already-connected peripheral for issuing FTMS commands.
 pub struct Controller<'a> {
@@ -90,11 +93,26 @@ impl<'a> Controller<'a> {
 
     /// Toggle the ambient LED strip (vendor `0xFFF2`, задача 058).
     ///
-    /// Prefers WriteWithoutResponse; falls back to WithResponse only when the
-    /// characteristic lacks that property (this unit's GATT snapshot advertises
-    /// plain `write`). No indication/notify reply is expected — unlike Control
-    /// Point opcodes — so the bounded wait is around the ATT write itself.
+    /// The firmware acts only on a state *transition* of its own LED flag,
+    /// which resets to "off" on a mains power-cycle while the strip re-lights
+    /// (задача 061). A bare `Off` is then a silent no-op, so `Off` is always
+    /// primed with an `On` write first (one console beep, ≤100 ms flash when
+    /// the strip was already dark). Strip state is not readable, so the prime
+    /// cannot be skipped when it is unnecessary.
     pub async fn set_led(&self, state: LedState) -> Result<()> {
+        if state == LedState::Off {
+            self.write_led(LedState::On).await?;
+            tokio::time::sleep(LED_PRIME_DELAY).await;
+        }
+        self.write_led(state).await
+    }
+
+    /// One raw LED write. Prefers WriteWithoutResponse; falls back to
+    /// WithResponse only when the characteristic lacks that property (this
+    /// unit's GATT snapshot advertises plain `write`). No indication/notify
+    /// reply is expected — unlike Control Point opcodes — so the bounded wait
+    /// is around the ATT write itself.
+    async fn write_led(&self, state: LedState) -> Result<()> {
         let Some(led_char) = self
             .peripheral
             .characteristics()
