@@ -14,18 +14,23 @@ CLI-утилита, которая по Bluetooth Low Energy находит бе
 - [`btleplug`](https://github.com/deviceplug/btleplug) — кросс-платформенный BLE; на macOS работает через **CoreBluetooth**.
 - `tokio` — async runtime; `tracing` — логирование; `anyhow` — ошибки.
 
-## Delegating to the Grok subagent
+## Delegating to the Codex subagent
 
 This file is read by two different agents. Follow the branch that matches who you are.
 
-**If you are a Grok subagent** — launched via the global wrapper (`GROK_AGENT_DEPTH` is set in your env); your working directory is a `…_grok-<name>` worktree (or the main repo in read-only research mode): do the assigned task **directly and completely**, then commit on your branch (research mode: just report). Your own in-session subagents (`spawn_subagent`) are allowed and encouraged; the one thing you must **never** do is shell out to `grok-agent.sh` — that's a fork loop, and the wrapper hard-refuses re-entry anyway. The rest of this section is not for you.
+**If you are a sandboxed subagent** — launched via a global wrapper (`CODEX_AGENT_DEPTH` or `GROK_AGENT_DEPTH` is set in your env); your working directory is a `…_codex-<name>` / `…_grok-<name>` worktree (or the main repo in read-only research mode): do the assigned task **directly and completely**, then commit on your branch (research mode: just report). Your own in-session subagents are allowed and encouraged; the one thing you must **never** do is shell out to `codex-agent.sh` / `grok-agent.sh` — that's a fork loop, and the wrappers hard-refuse re-entry anyway. The rest of this section is not for you.
 
-**If you are the orchestrating Claude Code session**: **Grok delegation is the DEFAULT in this repo** — this overrides the global CLAUDE.md's explicit-opt-in rule; no explicit ask is needed here.
-- **Delegate:** internet research (`~/.claude/tools/grok-agent.sh --ro <name> "<question>"`) and self-contained, well-scoped implementation (`~/.claude/tools/grok-agent.sh <name> "<task>"`) — run from inside this repo. Grok is fast and produces good, well-split commits.
-- **Keep in the main thread:** task decomposition, design decisions, writing the task doc, reviewing Grok's diff, and integrating its `grok/<name>` branch.
-- **Rust builds needing crate fetches:** add `--net crates.io --net static.crates.io`.
-- **Trust the diff, not the prose:** verify the actual commit on `grok/<name>`. An aborted run exits 2 with `stopReason=Cancelled` — continue it with `--resume <name>` rather than restarting.
-- Full doc: `ankor-dotfiles/docs/grok-agent.md`.
+**If you are the orchestrating Claude Code session**: **Codex-executor delegation is the DEFAULT in this repo** — this overrides the global CLAUDE.md's explicit-opt-in rule; no explicit ask is needed here.
+- **Delegate:** research (`~/.claude/tools/codex-agent.sh --ro <name> "<question>"`) and self-contained, well-scoped implementation (`~/.claude/tools/codex-agent.sh <name> "<task>"`) — run from inside this repo. The wrapper pins GPT-6 Astra @ effort `low` and prefixes the brief with "this brief IS the task doc — implement, test, commit now"; do not fight either. Rule of thumb: ≥ 80 changed lines or ≥ 2 files → delegate.
+- **Keep in the main thread:** task decomposition, design decisions, writing the task doc, reviewing the diff (mandatory — no configuration found its own wiring bugs in the 2026-09 benchmark), and integrating the `codex/<name>` branch.
+- **Run the wrapper from the repo's MAIN checkout, never from a linked worktree** — from a worktree it branches off the wrong tree; the wrapper refuses and prints the exact `cd` fix (`--here` overrides deliberately).
+- **Run independent phases in parallel** — there is no concurrency cap: every wrapper serialises worktree add/remove on one shared lock and pins its worktree for the run. The limits are the Codex quota guard (≤ 5 pp of the 7-day quota per run, WARN above 2 pp, refuses to start below 5 pp remaining) and the machine.
+- **Rust builds needing crate fetches** get the `cargo` net preset automatically (crates.io + static.crates.io + **index.crates.io** — the sparse registry; without it builds abort or silently go `--offline`) when a `Cargo.toml` sits at the root or one directory down; pass `--net cargo` explicitly otherwise. Loopback servers in tests work inside the sandbox (`allowLocalBinding`); LAN, GPU and Docker do not.
+- **The brief is the agent's entire context:** it sees this repo and this `CLAUDE.md`, but never the orchestrator's chat or Claude's memory files — inline any rule that lives only in memory, or it WILL be violated.
+- **Trust the diff, not the report:** verify the actual commits on `codex/<name>` and re-run the gates yourself. Every run leaves `.git/codex-runs/<name>-<utc>.{report.md,metrics.json}` (verified model/effort, tokens, commands, quota delta). Exit 2 (aborted / planning-only / quota cap) → continue with `--resume <name>` rather than restarting; exit 1 on a model or effort mismatch is deliberate — never work around it.
+- **Grok is the fallback executor** (`~/.claude/tools/grok-agent.sh`, identical flags, branch `grok/<name>`): use it when the Codex preflight reports the quota exhausted, or for repo archaeology (finding a buried bug in unfamiliar code); it runs at effort `medium` — never `high` — and aborts with `stopReason=Cancelled` now and then (`--resume`).
+- Flags: `~/.claude/tools/codex-agent.sh --help`. Large briefs go through `--prompt-file <path>` or `-` (stdin), not shell quoting.
+- Full docs: `ankor-dotfiles/docs/codex-agent.md`, `ankor-dotfiles/docs/grok-agent.md`.
 
 ## Архитектура
 
