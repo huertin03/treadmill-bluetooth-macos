@@ -33,6 +33,7 @@ pub const CONTROL_STALE_THRESHOLD: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlCommand {
     Start,
+    StartAt(CentiKmh),
     Stop,
     Speed(CentiKmh),
     Led(LedState),
@@ -40,11 +41,13 @@ pub enum ControlCommand {
 
 impl ControlCommand {
     /// Compact string persisted in `control_commands.command`: `start`,
-    /// `stop`, `speed:<kmh>` (e.g. `speed:2.5`), or `led:on`/`led:off`.
+    /// `start-speed:<kmh>`, `stop`, `speed:<kmh>` (e.g. `speed:2.5`),
+    /// or `led:on`/`led:off`.
     /// Human-readable km/h outside; [`CentiKmh`] inside.
     pub fn to_wire(self) -> String {
         match self {
             Self::Start => "start".to_string(),
+            Self::StartAt(speed) => format!("start-speed:{speed}"),
             Self::Stop => "stop".to_string(),
             Self::Speed(speed) => format!("speed:{speed}"),
             Self::Led(state) => format!("led:{state}"),
@@ -59,6 +62,9 @@ impl ControlCommand {
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
             other => {
+                if let Some(raw) = other.strip_prefix("start-speed:") {
+                    return crate::start_speed::parse_target(raw).map(Self::StartAt);
+                }
                 if let Some(raw) = other.strip_prefix("led:") {
                     let state: LedState = raw.parse().with_context(|| {
                         format!("unknown LED state in {other:?}; expected led:on or led:off")
@@ -76,6 +82,16 @@ impl ControlCommand {
                 };
                 Ok(Self::Speed(speed))
             }
+        }
+    }
+
+    /// Explicit starts must be picked up within five seconds. Together with
+    /// their 19s execution limit this stays inside the CLI's 25s wait budget.
+    pub fn is_stale_at(self, created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+        if matches!(self, Self::StartAt(_)) {
+            now.signed_duration_since(created_at) > chrono::Duration::seconds(5)
+        } else {
+            is_stale(created_at, now)
         }
     }
 }
@@ -97,6 +113,7 @@ mod tests {
     fn wire_round_trips_every_variant() {
         for cmd in [
             ControlCommand::Start,
+            ControlCommand::StartAt(CentiKmh::from_wire(400)),
             ControlCommand::Stop,
             ControlCommand::Speed(CentiKmh::from_wire(250)),
             ControlCommand::Led(LedState::On),
@@ -121,6 +138,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_garbage() {
+        for wire in [
+            "start-speed:",
+            "start-speed:NaN",
+            "start-speed:0",
+            "start-speed:30",
+        ] {
+            assert!(ControlCommand::parse(wire).is_err());
+        }
         assert!(ControlCommand::parse("frobnicate").is_err());
         assert!(ControlCommand::parse("speed:fast").is_err());
         assert!(ControlCommand::parse("speed:").is_err());
@@ -138,5 +163,9 @@ mod tests {
         // act / assert
         assert!(!is_stale(created, fresh));
         assert!(is_stale(created, old));
+        let explicit = ControlCommand::StartAt(CentiKmh::from_wire(400));
+        assert!(!explicit.is_stale_at(created, fresh));
+        assert!(explicit.is_stale_at(created, fresh + chrono::Duration::milliseconds(1)));
+        assert!(!ControlCommand::Start.is_stale_at(created, fresh + chrono::Duration::seconds(1)));
     }
 }

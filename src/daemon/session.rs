@@ -476,12 +476,12 @@ pub(super) async fn stream_with_presence(
                 // connected, so this bounds command latency to ≤1s during an
                 // active session (задача 013). The interval arm below is only a
                 // backstop for quiet stretches.
-                if process_control_commands(peripheral, store).await? {
+                if process_control_commands(peripheral, store, &mut link).await? {
                     zone.note_cli_speed(Instant::now());
                 }
             }
             _ = command_tick.tick() => {
-                if process_control_commands(peripheral, store).await? {
+                if process_control_commands(peripheral, store, &mut link).await? {
                     zone.note_cli_speed(Instant::now());
                 }
             }

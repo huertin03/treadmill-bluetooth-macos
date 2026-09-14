@@ -28,6 +28,7 @@ mod recompute_hr;
 mod scan;
 mod sniff;
 mod speed;
+mod start_speed;
 mod store;
 mod treadmill_link;
 mod widget;
@@ -121,7 +122,11 @@ enum Commands {
     /// `status` surface heart rate from the daemon instead (see docs/tasks/025).
     Hr,
     /// Start the belt via the FTMS Control Point.
-    Start,
+    Start {
+        /// Explicit target in km/h (validated against the device before starting).
+        #[arg(long, value_parser = crate::start_speed::parse_target)]
+        speed: Option<crate::speed::CentiKmh>,
+    },
     /// Stop the belt via the FTMS Control Point.
     Stop,
     /// Set target speed, km/h.
@@ -320,8 +325,8 @@ async fn main() -> Result<()> {
     // link (two processes can't co-own the connection — задача 013), and only
     // fall back to a direct connection when the daemon is off. Handled here,
     // before the adapter is opened, so the enqueue path never touches BLE.
-    if let Commands::Start = command {
-        return run_control(ControlCommand::Start).await;
+    if let Commands::Start { speed } = command {
+        return run_control(speed.map_or(ControlCommand::Start, ControlCommand::StartAt)).await;
     }
     if let Commands::Stop = command {
         return run_control(ControlCommand::Stop).await;
@@ -362,7 +367,7 @@ async fn main() -> Result<()> {
         | Commands::DefaultSpeed
         | Commands::Zone { .. }
         | Commands::SpeedWidget { .. }
-        | Commands::Start
+        | Commands::Start { .. }
         | Commands::Stop
         | Commands::Speed { .. }
         | Commands::Led { .. } => {
@@ -388,4 +393,24 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("treadmill_bluetooth_macos=info,warn"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn start_speed_is_optional_and_invalid_input_fails_during_parsing() {
+        assert!(matches!(
+            Cli::try_parse_from(["tm", "start"]).unwrap().command,
+            Some(Commands::Start { speed: None })
+        ));
+        let explicit = Cli::try_parse_from(["tm", "start", "--speed", "4"]).unwrap();
+        assert!(matches!(explicit.command,
+            Some(Commands::Start { speed: Some(s) }) if s == crate::speed::CentiKmh::from_wire(400)));
+        for raw in ["NaN", "inf", "0", "26", "fast"] {
+            assert!(Cli::try_parse_from(["tm", "start", "--speed", raw]).is_err());
+        }
+        assert!(Cli::try_parse_from(["tm", "start", "--speed"]).is_err());
+    }
 }

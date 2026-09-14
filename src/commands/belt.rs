@@ -39,6 +39,7 @@ pub(crate) async fn run_control(command: ControlCommand) -> Result<()> {
     let adapter = scan::first_adapter().await?;
     let mapped = match command {
         ControlCommand::Start => Command::Start,
+        ControlCommand::StartAt(speed) => Command::StartAt(speed),
         ControlCommand::Stop => Command::Stop,
         ControlCommand::Speed(speed) => Command::Speed(speed),
         ControlCommand::Led(state) => Command::Led(state),
@@ -72,7 +73,12 @@ pub(crate) async fn enqueue_and_wait(store: &store::Store, command: ControlComma
     let id = store.enqueue_control_command(&command)?;
     info!(id, command = %command.to_wire(), "daemon holds the link — enqueued command, waiting for it to run");
 
-    let deadline = Instant::now() + CONTROL_POLL_TIMEOUT;
+    let wait = if matches!(command, ControlCommand::StartAt(_)) {
+        crate::start_speed::POLL_TIMEOUT
+    } else {
+        CONTROL_POLL_TIMEOUT
+    };
+    let deadline = Instant::now() + wait;
     loop {
         match store.control_command_outcome(id)? {
             Some((status, _)) if status == "done" => {
@@ -88,6 +94,12 @@ pub(crate) async fn enqueue_and_wait(store: &store::Store, command: ControlComma
             _ => {}
         }
         if Instant::now() >= deadline {
+            if matches!(command, ControlCommand::StartAt(_)) {
+                bail!(
+                    "explicit start outcome unknown after {}s; check the belt and use the physical remote if needed before retrying",
+                    wait.as_secs()
+                );
+            }
             bail!(
                 "daemon did not run the command within {}s — it may be busy or the treadmill just disconnected; try again",
                 CONTROL_POLL_TIMEOUT.as_secs()
@@ -102,6 +114,9 @@ pub(crate) async fn enqueue_and_wait(store: &store::Store, command: ControlComma
 pub(crate) fn describe_control_success(command: &ControlCommand) -> String {
     match command {
         ControlCommand::Start => "belt started".to_string(),
+        ControlCommand::StartAt(speed) => {
+            format!("start and target {speed} km/h acknowledged (not measured belt speed)")
+        }
         ControlCommand::Stop => "belt stopped".to_string(),
         ControlCommand::Speed(speed) => format!("speed set to {speed} km/h"),
         ControlCommand::Led(state) => format!("led strip turned {state}"),
@@ -111,6 +126,7 @@ pub(crate) fn describe_control_success(command: &ControlCommand) -> String {
 /// A one-shot command issued over a fresh connection.
 pub(crate) enum Command {
     Start,
+    StartAt(CentiKmh),
     Stop,
     Speed(CentiKmh),
     Incline(f32),
@@ -119,9 +135,13 @@ pub(crate) enum Command {
 
 pub(crate) async fn run_command(adapter: &Adapter, command: Command) -> Result<()> {
     let peripheral = scan::connect_treadmill(adapter).await?;
+    if let Command::StartAt(speed) = command {
+        return crate::start_speed::run(&peripheral, speed).await;
+    }
     let controller = control::Controller::take_control(&peripheral).await?;
     match command {
         Command::Start => controller.start().await?,
+        Command::StartAt(_) => unreachable!("handled before requesting control"),
         Command::Stop => controller.stop().await?,
         Command::Speed(speed) => controller.set_speed(speed).await?,
         Command::Incline(percent) => controller.set_incline(percent).await?,

@@ -39,6 +39,7 @@ pub struct TreadmillLink {
     pre_pause_speed: Option<f32>,
     paused_since: Option<Instant>,
     default_speed_applied: bool,
+    explicit_start_until: Option<Instant>,
 }
 
 impl TreadmillLink {
@@ -53,6 +54,7 @@ impl TreadmillLink {
             pre_pause_speed: None,
             paused_since: None,
             default_speed_applied: false,
+            explicit_start_until: None,
         }
     }
 
@@ -103,7 +105,12 @@ impl TreadmillLink {
             .paused_since
             .take()
             .map(|since| now.saturating_duration_since(since));
-        let pre_pause_speed = self.pre_pause_speed.take();
+        let suppress_restore = self
+            .explicit_start_until
+            .take()
+            .is_some_and(|until| now < until);
+        let captured = self.pre_pause_speed.take();
+        let pre_pause_speed = if suppress_restore { None } else { captured };
         ResumeSnapshot {
             paused_for,
             pre_pause_speed,
@@ -123,6 +130,13 @@ impl TreadmillLink {
     /// Mark the once-per-session default-speed attempt as consumed.
     pub fn mark_default_speed_applied(&mut self) {
         self.default_speed_applied = true;
+    }
+
+    /// Explicit operator target wins over the next delayed resume/default.
+    /// Expiry prevents suppressing an unrelated pause/resume much later.
+    pub fn note_explicit_start(&mut self, now: Instant) {
+        self.default_speed_applied = true;
+        self.explicit_start_until = Some(now + Duration::from_secs(30));
     }
 }
 
@@ -299,6 +313,33 @@ mod tests {
         assert!(!link.default_speed_applied());
         link.mark_default_speed_applied();
         assert!(link.default_speed_applied());
+    }
+
+    #[test]
+    fn explicit_start_suppresses_delayed_restore_once_and_consumes_default() {
+        let now = Instant::now();
+        let mut link = TreadmillLink::new(tokio::time::Instant::from_std(now));
+        link.record_speed(Some(2.5), now);
+        link.note_explicit_start(now);
+        // A queued stopped frame can arrive after the command completes.
+        link.on_pause(now + Duration::from_secs(1));
+        assert_eq!(
+            link.on_resume(now + Duration::from_secs(2)).pre_pause_speed,
+            None
+        );
+        assert!(link.default_speed_applied());
+        link.on_pause(now + Duration::from_secs(3));
+        assert_eq!(
+            link.on_resume(now + Duration::from_secs(4)).pre_pause_speed,
+            Some(2.5)
+        );
+        link.note_explicit_start(now);
+        link.on_pause(now + Duration::from_secs(31));
+        assert_eq!(
+            link.on_resume(now + Duration::from_secs(32))
+                .pre_pause_speed,
+            Some(2.5)
+        );
     }
 
     /// The telemetry deadline must survive `select!` rebuilding its arm on every

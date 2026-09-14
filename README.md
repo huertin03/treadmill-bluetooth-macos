@@ -66,6 +66,26 @@ and can drive the treadmill (start / stop / target speed). 🏃💨
 
 ![tm start / stop / stats / status](./docs/screenshots/cli-overview.png)
 
+### Start with an explicit target
+
+`tm start --speed 4` requests Start, then a target of 4 km/h on the same
+connection. Bare `tm start` retains the existing default/resume behavior.
+The explicit command validates the device's Supported Speed Range before
+starting; values use km/h, rounded to 0.01, and must match its range/increment.
+It is one daemon queue item, not two independent CLI invocations. Both CLI and
+daemon must be upgraded together; older daemons reject the new queue verb.
+
+Success means the device **acknowledged the target**, not that the belt has
+physically reached it. If Start/Set Speed fails or times out, a bounded Stop is
+attempted and the error reports its outcome. Check the belt and use the physical
+remote if needed; do not blindly retry an uncertain result. Startup/countdown
+timing still needs hardware validation for this new combined operation.
+
+Explicit intent consumes the session default and suppresses the next automatic
+pre-pause restore within 30 seconds. Zone Hold retains its existing 60-second
+manual-speed override and safety Stop behavior. Explicit starts expire if not
+picked up within 5 seconds; the CLI waits up to 25 seconds for an outcome.
+
 ## 📋 Requirements
 
 - 🍎 **macOS** (Apple Silicon or Intel). No Linux / Windows — see [Limitations](#-limitations).
