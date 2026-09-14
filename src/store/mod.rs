@@ -21,6 +21,7 @@
 
 mod activity;
 mod control_queue;
+mod json;
 mod samples;
 mod schema;
 mod status;
@@ -42,6 +43,20 @@ pub struct Store {
 }
 
 impl Store {
+    /// Read-only CLI access: no creation, migrations, or retention pruning.
+    pub(crate) fn open_readonly() -> Result<Option<Self>> {
+        Self::open_readonly_at(&db_path()?)
+    }
+
+    pub(crate) fn open_readonly_at(path: &std::path::Path) -> Result<Option<Self>> {
+        if !path.try_exists()? {
+            return Ok(None);
+        }
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.busy_timeout(std::time::Duration::from_secs(3))?;
+        Ok(Some(Self { conn }))
+    }
+
     /// Open (creating if needed) the SQLite database under
     /// `~/Library/Application Support/treadmill-bluetooth-macos/`.
     ///
