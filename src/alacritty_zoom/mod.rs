@@ -1,10 +1,10 @@
-//! Font-only Alacritty IPC automation. Daemon integration follows in P2.
+//! Font-only Alacritty IPC automation with serialized recovery and daemon convergence.
 
 pub mod ipc;
+pub mod lock;
 pub mod operations;
 mod retry;
 pub use retry::get_font_size;
-#[allow(dead_code)] // P2 consumes the desired-state worker and presence intent.
 pub mod worker;
 
 use crate::presence::PresenceState;
@@ -16,7 +16,6 @@ pub const SIZE_EPSILON: f64 = 1e-3;
 pub const IPC_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 pub const IPC_MAX_ATTEMPTS: usize = 5;
 pub const IPC_RETRY_BACKOFF: [u64; 4] = [50, 100, 200, 400];
-#[allow(dead_code)] // Used by the P2 worker.
 pub const INSTANCE_RESCAN_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,7 +37,6 @@ pub struct ZoomWant {
     pub active: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 pub enum Applied {
     Unknown,
     Base,
@@ -50,7 +48,6 @@ pub enum ZoomOp {
     Apply { delta_pt: f64 },
 }
 
-#[allow(dead_code)]
 pub fn plan(applied: Applied, want: &ZoomWant) -> Option<ZoomOp> {
     if want.config.enabled && want.active {
         if applied
@@ -70,7 +67,6 @@ pub fn plan(applied: Applied, want: &ZoomWant) -> Option<ZoomOp> {
     Some(ZoomOp::Revert)
 }
 
-#[allow(dead_code)]
 pub fn zoom_intent(state: PresenceState) -> Option<bool> {
     match state {
         PresenceState::Walking => Some(true),
@@ -166,4 +162,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;

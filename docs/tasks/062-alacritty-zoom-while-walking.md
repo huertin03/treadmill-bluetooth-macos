@@ -1,15 +1,15 @@
 # 062 — Alacritty font zoom while walking (`alacritty_zoom`)
 
-**Status:** P1 implemented 2026-09-15; P2 daemon wiring and live smoke pending. Line numbers below predate task 063 (landed the same day, touches
+**Status:** P2 implemented, live smoke pending (2026-09-15). Line numbers below predate task 063 (landed the same day, touches
 `session.rs`/`commands`): re-locate by symbol. Operator confirmed: font-only revert and its costs (D3/D4), shrink only on `Paused` or session end, and a manual IPC check (grow/shrink both ways, other overrides survive, manual-zoom guard). Facts and sources:
 research [008](../research/008-alacritty-ipc-font-size.md). Read it first. Everything below is
 derived from it.
 
 ## P1 implementation notes (2026-09-15)
 
-- Core, desired-state worker, SQLite recovery, config loader and CLI are implemented.
-  The worker is deliberately **not wired into the daemon** until P2; `on` persists
-  the setting, while `preview`, `off` and `reset` operate directly now.
+- P1 implemented the core, desired-state worker, SQLite recovery, config loader
+  and CLI. P2 now wires the worker into daemon startup, presence, session end,
+  and config hot reload; direct CLI calibration/recovery remains available.
 - Recovery refinement to D3/D4: the table also has nullable `previous_target_pt`.
   During a delta change, persist the previous automated size alongside the new
   target before writing. Clear it after verified delivery. Until then, either
@@ -26,10 +26,11 @@ derived from it.
 - Validation: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo build`, `cargo test` passed in that order; **281 tests passed**, including
   26 Alacritty zoom tests. The intentional schema snapshot includes the new table.
-- P2 integration review must coordinate overlapping CLI/worker operations: SQLite
-  statements are safe individually, but an overlapping reset must not delete an
-  in-flight apply's recovery record. P1 currently assumes sequential CLI operations.
-- Manual live smoke, uninstall changes, daemon wiring and dotfiles remain P2 /
+- P2 resolves overlapping CLI/worker operations with D14's shared advisory lock.
+  Whole-op failures preserve the last completed state and retry on interval ticks;
+  each error streak warns once, repeats at DEBUG, and logs recovery once at INFO.
+- P2 includes nonfatal zoom startup, presence/session wiring, config hot reload,
+  and best-effort uninstall reset. Manual live smoke and dotfiles changes remain
   orchestrator work. No live Alacritty is invoked by the tests.
 
 ## Context
@@ -106,7 +107,7 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   because Alacritty serialises pt through `f32` (`14.7` reads back as `14.6999998…`).
   - `Apply{delta}` per instance:
     1. `msg -s S get-config -w -1` → current size `cur`.
-    2. Find the base. If a zoom record for this pid exists and `cur ≈ record.target`, we already
+    2. Find the base. If a zoom record for this pid exists and `cur ≈ record.target` (or `previous_target_pt`), we already
        zoomed it: `base = record.base`. Otherwise `base = cur`. Reading the base this way is
        crash-safe, so constraint 5 does not apply.
     3. `target = base + delta`.
@@ -116,9 +117,10 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   - `Revert` per **recorded** instance (never an unrecorded one, so windows we did not zoom are
     never touched):
     1. `get-config -w -1` → `cur`.
-    2. If `cur ≈ record.target`, send `config -w -1 font.size=<fmt(record.base)>` and verify-and-retry.
+    2. If `cur ≈ record.target` (or `previous_target_pt`), send `config -w -1 font.size=<fmt(record.base)>` and verify-and-retry.
     3. If not, someone else changed it or the pid was reused: skip at INFO.
-    4. Delete the record either way.
+    4. Delete the record after successful delivery or confirmed external change.
+       Failed delivery retains it for recovery.
   - **Verify-and-retry** (constraint 3):
     - one *attempt* = `config … font.size=X` (exit code only logged at DEBUG), then `get-config` → size;
     - success when `≈ X`;
@@ -132,10 +134,13 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   - Format the size with ≤3 decimals, trailing zeros trimmed (`14.625`, `15`).
 - **D4 — Zoom records in SQLite** (`Store`, new table `alacritty_zoom`:
   `pid INTEGER PRIMARY KEY, started_at_us INTEGER NOT NULL, socket TEXT NOT NULL, base_pt REAL NOT NULL,
-  target_pt REAL NOT NULL, applied_at_ms INTEGER NOT NULL`). A record matches an instance only when
+  target_pt REAL NOT NULL, previous_target_pt REAL, applied_at_ms INTEGER NOT NULL`). A record matches an instance only when
   **both** `pid` and `started_at_us` match (D13). This is the memory that makes a font-only revert possible after a
   daemon crash or restart: `get-config` cannot tell the file base from our override (constraint 5).
-  - It is shared safely by the daemon and the `tm` CLI (both already open `Store`).
+  - `previous_target_pt` is an endorsed recovery field: persist the previous
+    automated size before replacing a target, accept either target when choosing
+    the recorded base or reverting, and clear it only after verified delivery.
+  - It is shared safely by the daemon and the `tm` CLI under D14's operation lock.
   - Rows are deleted on revert, and rows whose pid is no longer a live `alacritty` get pruned on every
     op. The table is bounded by the number of live Alacritty processes.
   - Accepted costs, told to the operator:
@@ -165,7 +170,10 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   | `Zoomed{d}` | enabled, active, other `d` | `Apply` (pt changed via hot-reload; D3 step 2 keeps the recorded base) |
   | `Zoomed{_}` | disabled or not active | `Revert` |
 
-  After an op: `Revert` → `Base`, `Apply` → `Zoomed`.
+  After a successful op: `Revert` → `Base`, `Apply` → `Zoomed`. Whole-op errors
+  (including record IO and lock timeout) keep the previous state and retry on the
+  next rescan tick, even while Base/Unknown. Newer desired state wins; retry still
+  reconciles partial writes when it matches the previous completed state.
   - `Apply` runs on **every** discovered instance; `Revert` runs on every recorded live instance.
   - The worker tracks `zoomed_pids` and `failed_pids`. Per-instance failure → `WARN`, move on. A failed
     pid is not retried until the next op (no WARN spam).
@@ -175,7 +183,7 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   `zoomed ∪ failed`.
   - The rescan is cheap: one `read_dir` of `$TMPDIR` (~600 entries on the host), a name filter first, and
     then `proc_pidpath`/`proc_pidinfo` only for the ~20 `Alacritty-*.sock` names.
-  - No rescan at all while `Base`.
+  - No late-process rescan while `Base`; a pending whole-op retry still arms the tick.
   This covers Alacritty (re)launched mid-walk; orphan sockets show it does crash. New windows inside
   a zoomed process inherit `-w -1` by themselves (research 008 fact 3).
   - Memory rule: a `select!` `if` guard does **not** stop the arm's future expression from being built on
@@ -273,6 +281,21 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   - `WARN` for spawn error, timeout, non-zero exit (include stderr), unparsable `get-config`,
     read-back mismatch and invalid config.
   - DEBUG for orphan sockets and "not running".
+
+- **D14 — Cross-process operation lock.** Every core operation (`run_op`, `rescan`,
+  including CLI preview/reset/off) owns an exclusive advisory lock on
+  `~/Library/Application Support/treadmill-bluetooth-macos/alacritty_zoom.lock`.
+  The lock shares `Store::db_path` directory resolution; test paths are injectable.
+  - Use `libc::flock(fd, LOCK_EX | LOCK_NB)`. On EWOULDBLOCK, sleep asynchronously
+    for 50 ms and retry until `ZOOM_LOCK_WAIT = 40s`; timeout returns an error.
+    No blocking flock on Tokio threads. Worker retries whole-op errors; CLI exits
+    nonzero with the error. Each operation re-reads records and get-config while locked.
+  - Create the file with mode 0600. A RAII guard owns its File; dropping it or
+    process exit releases the kernel lock. Never delete the production lock file.
+  - Status tries the lock once. If busy, print `daemon operation in progress` and
+    probe read-only, without pruning/deleting records.
+  - Tests use disposable directories under `target/`, covering serialization,
+    timeout, and reset waiting for an in-flight apply before restoring its base.
 
 ## Plan
 

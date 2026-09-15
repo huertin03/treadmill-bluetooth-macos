@@ -9,6 +9,7 @@
 use std::time::{Duration, SystemTime};
 
 use crate::config;
+use crate::alacritty_zoom::ZoomConfig;
 use crate::goals::{self, Goal};
 use crate::led::LedState;
 use crate::zone_hold::{self, ZoneHoldConfig};
@@ -23,6 +24,7 @@ pub struct LiveConfig {
     /// `None` = leave the treadmill's current state. Reload updates the
     /// field only — it must not write to the strip mid-session.
     pub led_on_connect: Option<LedState>,
+    pub alacritty_zoom: ZoomConfig,
 }
 
 /// What actually changed on disk. `None` field = unchanged.
@@ -35,6 +37,7 @@ pub struct ConfigDelta {
     pub auto_pause: Option<Option<Duration>>,
     pub zone_hold: Option<ZoneHoldConfig>,
     pub led_on_connect: Option<Option<LedState>>,
+    pub alacritty_zoom: Option<ZoomConfig>,
 }
 
 impl ConfigDelta {
@@ -46,6 +49,7 @@ impl ConfigDelta {
             && self.auto_pause.is_none()
             && self.zone_hold.is_none()
             && self.led_on_connect.is_none()
+            && self.alacritty_zoom.is_none()
     }
 }
 
@@ -107,11 +111,14 @@ pub enum ConfigEffect {
     /// `led_on_connect` changed — executor logs old→new. Takes effect at the
     /// next treadmill connect; reload must not write to the strip.
     LedOnConnectChanged,
+    /// Font automation config changed; executor sends the latest desired config.
+    AlacrittyZoomChanged,
 }
 
 /// Pure diff old vs new (each field via `PartialEq`, as the reload branch did).
 pub fn diff(old: &LiveConfig, new: &LiveConfig) -> ConfigDelta {
     ConfigDelta {
+        alacritty_zoom: (old.alacritty_zoom != new.alacritty_zoom).then_some(new.alacritty_zoom),
         goals: if old.goals != new.goals {
             Some(new.goals.clone())
         } else {
@@ -154,6 +161,7 @@ pub fn reload_if_changed(
         auto_pause: config::load_auto_pause(),
         zone_hold: zone_hold::load_zone_hold_config(),
         led_on_connect: config::load_led_on_connect(),
+        alacritty_zoom: config::load_alacritty_zoom(),
     };
     Some(diff(current, &loaded))
 }
@@ -168,6 +176,11 @@ pub fn apply_config(
     snap: &SessionSnapshot,
 ) -> Vec<ConfigEffect> {
     let mut effects = Vec::new();
+
+    if let Some(zoom) = delta.alacritty_zoom {
+        config.alacritty_zoom = zoom;
+        effects.push(ConfigEffect::AlacrittyZoomChanged);
+    }
 
     if let Some(goals) = delta.goals {
         config.goals = goals;
@@ -315,7 +328,7 @@ fn effect_rank(effect: &ConfigEffect) -> u8 {
         ConfigEffect::ZoneDisengage(_) => 0,
         ConfigEffect::GoalsChanged => 1,
         ConfigEffect::AutoPauseChanged => 2,
-        ConfigEffect::LedOnConnectChanged => 3,
+        ConfigEffect::LedOnConnectChanged | ConfigEffect::AlacrittyZoomChanged => 3,
         ConfigEffect::ZoneConfigChanged { .. } => 4,
         ConfigEffect::ZoneReResolve => 5,
         ConfigEffect::ZoneWarmupRetarget { .. } => 6,
@@ -342,6 +355,7 @@ mod tests {
             auto_pause: Some(Duration::from_secs(5 * 60)),
             zone_hold: zh,
             led_on_connect: None,
+            alacritty_zoom: ZoomConfig::default(),
         }
     }
 
@@ -658,18 +672,21 @@ mod tests {
                         None
                     },
                     led_on_connect: None,
+                    alacritty_zoom: None,
                 },
                 ExtraDelta::Goals => ConfigDelta {
                     goals: Some(new_goals.clone()),
                     auto_pause: None,
                     zone_hold: None,
                     led_on_connect: None,
+                    alacritty_zoom: None,
                 },
                 ExtraDelta::AutoPause => ConfigDelta {
                     goals: None,
                     auto_pause: Some(new_auto_pause),
                     zone_hold: None,
                     led_on_connect: None,
+                    alacritty_zoom: None,
                 },
             };
             // Capture for the helper — need old zone before apply when comparing.
@@ -728,6 +745,7 @@ mod tests {
                 auto_pause: None,
                 zone_hold: Some(new_zh.clone()),
                 led_on_connect: None,
+                alacritty_zoom: None,
             },
             &snap(PhaseKind::Hold, true),
         );
@@ -830,6 +848,7 @@ mod tests {
                 auto_pause: None,
                 zone_hold: Some(new_zh),
                 led_on_connect: None,
+                alacritty_zoom: None,
             },
             &snap(PhaseKind::Ramp, true),
         );
@@ -900,6 +919,7 @@ mod tests {
                 auto_pause: Some(None),
                 zone_hold: Some(new_zh),
                 led_on_connect: None,
+                alacritty_zoom: None,
             },
             &snap(PhaseKind::Off, true),
         );
@@ -925,6 +945,7 @@ mod tests {
                 auto_pause: Some(None),
                 zone_hold: Some(new_zh),
                 led_on_connect: None,
+                alacritty_zoom: None,
             },
             &snap(PhaseKind::Hold, true),
         );
@@ -948,6 +969,7 @@ mod tests {
                 auto_pause: None,
                 zone_hold: None,
                 led_on_connect: Some(Some(crate::led::LedState::Off)),
+                alacritty_zoom: None,
             },
             &snap(PhaseKind::Hold, true),
         );
@@ -961,10 +983,33 @@ mod tests {
                 auto_pause: None,
                 zone_hold: None,
                 led_on_connect: Some(None),
+                alacritty_zoom: None,
             },
             &snap(PhaseKind::Hold, true),
         );
         assert_eq!(effects, vec![ConfigEffect::LedOnConnectChanged]);
         assert_eq!(config.led_on_connect, None);
     }
+
+    #[test]
+    fn zoom_diff_and_apply_emit_only_zoom_effect() {
+        let mut config = live(zh_enabled());
+        assert!(diff(&config, &config).is_empty());
+        for new_zoom in [
+            ZoomConfig { enabled: true, delta_pt: 0.625 },
+            ZoomConfig { enabled: true, delta_pt: 1.25 },
+            ZoomConfig { enabled: false, delta_pt: 1.25 },
+        ] {
+            let mut new = config.clone();
+            new.alacritty_zoom = new_zoom;
+            let delta = diff(&config, &new);
+            assert_eq!(delta.alacritty_zoom, Some(new_zoom));
+            assert!(!delta.is_empty());
+            let effects = apply_config(&mut config, delta, &snap(PhaseKind::Hold, true));
+            assert_eq!(effects, vec![ConfigEffect::AlacrittyZoomChanged]);
+            assert_eq!(config, new);
+            assert!(diff(&config, &new).is_empty());
+        }
+    }
+
 }

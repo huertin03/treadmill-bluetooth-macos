@@ -12,6 +12,7 @@ use tracing::{error, info, warn};
 use super::session::stream_with_presence;
 use super::state::{DaemonState, persist_daemon_status};
 use super::watchdog::Watchdog;
+use crate::alacritty_zoom::{ipc::SystemIpc, worker::{AlacrittyZoom, spawn_worker}};
 use crate::config;
 use crate::config_apply::LiveConfig;
 use crate::goals;
@@ -185,6 +186,7 @@ pub async fn run(adapter: &Adapter) -> Result<()> {
         auto_pause: config::load_auto_pause(),
         zone_hold: zone_hold::load_zone_hold_config(),
         led_on_connect: config::load_led_on_connect(),
+        alacritty_zoom: config::load_alacritty_zoom(),
     };
     info!(
         goals = ?live_config.goals, auto_pause = ?live_config.auto_pause,
@@ -192,6 +194,18 @@ pub async fn run(adapter: &Adapter) -> Result<()> {
         led_on_connect = config::format_led_on_connect(live_config.led_on_connect),
         "loaded config (goals + idle-belt auto-pause + zone hold + led_on_connect)"
     );
+    let (zoom, _zoom_task) = match Store::open()
+        .and_then(|store| SystemIpc::new(std::env::temp_dir(), store))
+    {
+        Ok(ipc) => {
+            let (zoom, task) = spawn_worker(ipc, live_config.alacritty_zoom);
+            (zoom, Some(task))
+        }
+        Err(error) => {
+            warn!(%error, "Alacritty zoom initialization failed; continuing without font automation");
+            (AlacrittyZoom::disabled(), None)
+        }
+    };
     let watchdog = Watchdog::new();
     watchdog.spawn_monitor();
     // Refreshes `daemon_status.updated_at` (and the watchdog) while idle, so
@@ -335,6 +349,7 @@ pub async fn run(adapter: &Adapter) -> Result<()> {
                             &watchdog,
                             &mut on_ac,
                             &mut live_config,
+                            &zoom,
                             &mut db_persist_failures,
                         )
                         .await
@@ -351,6 +366,7 @@ pub async fn run(adapter: &Adapter) -> Result<()> {
                         // observed to hang for hours (задача 007), and the
                         // operator-visible signals must not depend on it.
                         notify::treadmill_lost();
+                        zoom.set_active(false);
                         state.connected = false;
                         state.presence_state = None;
                         state.last_disconnected_at = Some(Utc::now().to_rfc3339());

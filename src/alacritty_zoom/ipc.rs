@@ -28,6 +28,8 @@ pub struct Reply {
 
 /// One-call seam: retry and recovery logic is shared by production and fake clients.
 pub trait AlacrittyIpc: Send {
+    /// None is reserved for in-memory test clients with no shared persistence.
+    fn lock_path(&self) -> Option<PathBuf>;
     fn discover_instances(&mut self) -> Result<Vec<AlacrittyInstance>>;
     fn is_live(&mut self, instance: &AlacrittyInstance) -> bool;
     fn call(
@@ -43,18 +45,24 @@ pub trait AlacrittyIpc: Send {
 pub struct SystemIpc {
     dir: PathBuf,
     store: Store,
+    lock_path: PathBuf,
     skipped: HashSet<i32>,
 }
 impl SystemIpc {
-    pub fn new(dir: PathBuf, store: Store) -> Self {
-        Self {
+    pub fn new(dir: PathBuf, store: Store) -> Result<Self> {
+        let lock_path = crate::store::db_path()?.with_file_name("alacritty_zoom.lock");
+        Ok(Self {
             dir,
             store,
+            lock_path,
             skipped: HashSet::new(),
-        }
+        })
     }
 }
 impl AlacrittyIpc for SystemIpc {
+    fn lock_path(&self) -> Option<PathBuf> {
+        Some(self.lock_path.clone())
+    }
     fn discover_instances(&mut self) -> Result<Vec<AlacrittyInstance>> {
         discover_instances(&self.dir, &mut self.skipped)
     }

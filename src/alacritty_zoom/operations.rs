@@ -1,10 +1,21 @@
 //! Persist-before-write operations shared by the CLI and desired-state worker.
+use super::lock::ZoomLock;
 use super::ipc::{AlacrittyInstance, AlacrittyIpc, Identity};
 use super::retry::{get_font_size, set_font_size};
 use super::{ZoomOp, is_valid_delta, sizes_match};
 use crate::store::ZoomRecord;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::collections::HashSet;
+
+/// Record failures abort the whole operation so the worker retries, unlike
+/// exhausted IPC for one live PID (which is suppressed until the next intent).
+#[derive(Debug)]
+struct RecordFailure;
+impl std::fmt::Display for RecordFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Alacritty zoom recovery record operation failed")
+    }
+}
 
 pub struct ZoomCore<I> {
     pub ipc: I,
@@ -23,7 +34,7 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
     /// Reconcile persisted identities on every operation, including late-process scans.
     pub fn discover_and_prune(&mut self) -> Result<Vec<AlacrittyInstance>> {
         let instances = self.ipc.discover_instances()?;
-        for record in self.ipc.zoom_records()? {
+        for record in self.ipc.zoom_records().context(RecordFailure)? {
             let identity = record_identity(&record);
             if !instances
                 .iter()
@@ -40,6 +51,7 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
     }
 
     pub async fn run_op(&mut self, op: ZoomOp) -> Result<()> {
+        let _guard = self.acquire_lock().await?;
         self.zoomed.clear();
         self.failed.clear();
         let instances = self.discover_and_prune()?;
@@ -49,8 +61,8 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
         self.run_instances(instances, op).await
     }
 
-    #[allow(dead_code)] // Called by the P2 worker.
     pub async fn rescan(&mut self, delta_pt: f64) -> Result<()> {
+        let _guard = self.acquire_lock().await?;
         let instances = self
             .discover_and_prune()?
             .into_iter()
@@ -61,6 +73,13 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
             .collect();
         self.run_instances(instances, ZoomOp::Apply { delta_pt })
             .await
+    }
+
+    async fn acquire_lock(&mut self) -> Result<Option<ZoomLock>> {
+        match self.ipc.lock_path() {
+            Some(path) => ZoomLock::acquire(&path).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     async fn run_instances(&mut self, instances: Vec<AlacrittyInstance>, op: ZoomOp) -> Result<()> {
@@ -88,9 +107,12 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
     }
 
     fn handle_failure(&mut self, instance: &AlacrittyInstance, error: anyhow::Error) -> Result<()> {
+        if error.is::<RecordFailure>() {
+            return Err(error);
+        }
         if !self.ipc.is_live(instance) {
             tracing::debug!(identity = ?instance.identity, %error, "Alacritty instance exited mid-op");
-            self.ipc.delete_zoom_record(instance.identity)?;
+            self.ipc.delete_zoom_record(instance.identity).context(RecordFailure)?;
             return Ok(());
         }
         tracing::warn!(identity = ?instance.identity, %error, "Alacritty zoom operation failed");
@@ -105,7 +127,7 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
     ) -> Result<Option<(f64, f64)>> {
         let record = self
             .ipc
-            .zoom_records()?
+            .zoom_records().context(RecordFailure)?
             .into_iter()
             .find(|record| record_identity(record) == instance.identity);
         match op {
@@ -151,10 +173,10 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
                 .map(|_| current),
             applied_at_ms: chrono::Utc::now().timestamp_millis(),
         };
-        self.ipc.upsert_zoom_record(&pending)?;
+        self.ipc.upsert_zoom_record(&pending).context(RecordFailure)?;
         set_font_size(&mut self.ipc, instance, target).await?;
         if pending.previous_target_pt.take().is_some() {
-            self.ipc.upsert_zoom_record(&pending)?;
+            self.ipc.upsert_zoom_record(&pending).context(RecordFailure)?;
         }
         Ok((base, target))
     }
@@ -176,7 +198,7 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
                 "Alacritty font changed externally; skipping revert"
             );
         }
-        self.ipc.delete_zoom_record(instance.identity)?;
+        self.ipc.delete_zoom_record(instance.identity).context(RecordFailure)?;
         Ok(changed.then_some((record.base_pt, record.target_pt)))
     }
 }

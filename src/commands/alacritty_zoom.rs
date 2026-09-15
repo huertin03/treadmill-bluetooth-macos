@@ -9,7 +9,7 @@ use clap::Subcommand;
 
 #[derive(Subcommand)]
 pub(crate) enum ZoomAction {
-    /// Enable walking font automation (requires daemon integration).
+    /// Enable walking font automation.
     On,
     /// Disable automation and restore recorded font sizes now.
     Off,
@@ -50,7 +50,7 @@ pub(crate) async fn run_zoom(action: Option<ZoomAction>) -> Result<()> {
             if matches!(action, Some(ZoomAction::Off)) {
                 set_key("alacritty_zoom", "false")?;
             }
-            let mut core = ZoomCore::new(SystemIpc::new(std::env::temp_dir(), Store::open()?));
+            let mut core = ZoomCore::new(SystemIpc::new(std::env::temp_dir(), Store::open()?)?);
             match action {
                 None => print_probe(&mut core, config).await,
                 Some(ZoomAction::Preview) => {
@@ -87,9 +87,16 @@ fn set_key(key: &str, value: &str) -> Result<()> {
     println!("{key}: {}", highlight_config(value));
     Ok(())
 }
-async fn print_probe(core: &mut ZoomCore<SystemIpc>, config: ZoomConfig) -> Result<()> {
+async fn print_probe<I: AlacrittyIpc>(core: &mut ZoomCore<I>, config: ZoomConfig) -> Result<()> {
     print_setting(config);
-    let instances = core.discover_and_prune()?;
+    let path = core.ipc.lock_path().ok_or_else(|| anyhow::anyhow!("missing Alacritty zoom lock path"))?;
+    let guard = crate::alacritty_zoom::lock::ZoomLock::try_acquire(&path)?;
+    let instances = if guard.is_some() {
+        core.discover_and_prune()?
+    } else {
+        println!("daemon operation in progress");
+        core.ipc.discover_instances()?
+    };
     if instances.is_empty() {
         println!("alacritty: not running");
     }
@@ -101,17 +108,19 @@ async fn print_probe(core: &mut ZoomCore<SystemIpc>, config: ZoomConfig) -> Resu
                 });
                 let base = record.map_or(current, |record| record.base_pt);
                 println!(
-                    "alacritty: running pid {} — base {} pt → walking {} pt (+{} pt)",
+                    "alacritty: running pid {} — base {} pt → walking {} pt ({} pt)",
                     instance.identity.pid,
                     format_font_size(base),
                     format_font_size(base + config.delta_pt),
-                    highlight_config(format_font_size(config.delta_pt))
+                    highlight_config(format!("+{}", format_font_size(config.delta_pt)))
                 );
             }
             Err(error) => {
                 if !core.ipc.is_live(&instance) {
                     tracing::debug!(pid = instance.identity.pid, %error, "Alacritty instance exited mid-probe");
-                    core.ipc.delete_zoom_record(instance.identity)?;
+                    if guard.is_some() {
+                        core.ipc.delete_zoom_record(instance.identity)?;
+                    }
                     println!(
                         "alacritty: pid {} exited during probe",
                         instance.identity.pid
@@ -160,4 +169,29 @@ mod tests {
             assert!(run_zoom(Some(ZoomAction::Pt { value })).await.is_err());
         }
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn busy_probe_is_read_only_and_never_waits_for_lock() {
+        use crate::alacritty_zoom::lock::ZoomLock;
+        use crate::alacritty_zoom::test_support::{Fake, TestLockDir};
+        let dir = TestLockDir::create();
+        let fake = Fake::default();
+        let old = fake.add(1, 10, 14.625);
+        fake.record(old, 14.0, 14.625);
+        fake.remove(old);
+        let live = fake.add(2, 20, 12.0);
+        fake.0.lock().unwrap().lock_path = Some(dir.path());
+        let mut core = ZoomCore::new(fake.clone());
+        let guard = ZoomLock::acquire(&dir.path()).await.unwrap();
+        let started = tokio::time::Instant::now();
+        print_probe(&mut core, ZoomConfig::default()).await.unwrap();
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+        assert_eq!(fake.0.lock().unwrap().records.len(), 1);
+        assert!(fake.0.lock().unwrap().log.iter().all(|call| call.contains("get-config")));
+        assert_eq!(fake.size(live), 12.0);
+        drop(guard);
+        print_probe(&mut core, ZoomConfig::default()).await.unwrap();
+        assert!(fake.0.lock().unwrap().records.is_empty());
+    }
+
 }

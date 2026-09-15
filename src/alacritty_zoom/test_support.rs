@@ -18,6 +18,9 @@ pub struct State {
     pub vanish_on_set: bool,
     pub scans: usize,
     pub fail_discovery: bool,
+    pub fail_record_write: bool,
+    pub fail_record_delete: bool,
+    pub lock_path: Option<std::path::PathBuf>,
     pub call_delay: Option<std::time::Duration>,
 }
 #[derive(Clone, Default)]
@@ -60,6 +63,9 @@ impl Fake {
     }
 }
 impl AlacrittyIpc for Fake {
+    fn lock_path(&self) -> Option<std::path::PathBuf> {
+        self.0.lock().unwrap().lock_path.clone()
+    }
     fn discover_instances(&mut self) -> Result<Vec<AlacrittyInstance>> {
         let mut state = self.0.lock().unwrap();
         state.scans += 1;
@@ -141,6 +147,7 @@ impl AlacrittyIpc for Fake {
     }
     fn upsert_zoom_record(&mut self, record: &ZoomRecord) -> Result<()> {
         let mut state = self.0.lock().unwrap();
+        if state.fail_record_write { bail!("injected SQLite busy on upsert"); }
         state.log.push(format!("{}:record", record.pid));
         state.records.retain(|item| item.pid != record.pid);
         state.records.push(record.clone());
@@ -148,6 +155,7 @@ impl AlacrittyIpc for Fake {
     }
     fn delete_zoom_record(&mut self, identity: Identity) -> Result<()> {
         let mut state = self.0.lock().unwrap();
+        if state.fail_record_delete { bail!("injected SQLite busy on delete"); }
         state.log.push(format!("{}:delete", identity.pid));
         state.records.retain(|record| {
             record.pid != identity.pid || record.started_at_us != identity.started_at_us
@@ -156,7 +164,7 @@ impl AlacrittyIpc for Fake {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Logs(Arc<Mutex<Vec<u8>>>);
 impl std::io::Write for Logs {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -174,14 +182,48 @@ impl Logs {
             .count()
     }
 }
-pub fn capture_logs() -> (Logs, tracing::subscriber::DefaultGuard) {
+// One global subscriber avoids racing tracing's process-wide callsite cache
+// when tests install/drop thread-local subscribers concurrently. Each test still
+// captures only its own thread (worker tests use Tokio's current-thread runtime).
+static LOG_SUBSCRIBER: std::sync::Once = std::sync::Once::new();
+thread_local! {
+    static CURRENT_LOGS: std::cell::RefCell<Option<Logs>> = const { std::cell::RefCell::new(None) };
+}
+pub struct LogGuard(Option<Logs>);
+impl Drop for LogGuard {
+    fn drop(&mut self) {
+        CURRENT_LOGS.with(|logs| *logs.borrow_mut() = self.0.take());
+    }
+}
+pub fn capture_logs() -> (Logs, LogGuard) {
+    LOG_SUBSCRIBER.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(|| CURRENT_LOGS.with(|logs| logs.borrow().clone().unwrap_or_default()))
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+    });
     let logs = Logs::default();
-    let writer = logs.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .without_time()
-        .with_ansi(false)
-        .with_max_level(tracing::Level::DEBUG)
-        .with_writer(move || writer.clone())
-        .finish();
-    (logs, tracing::subscriber::set_default(subscriber))
+    let previous = CURRENT_LOGS.with(|current| current.replace(Some(logs.clone())));
+    (logs, LogGuard(previous))
+}
+
+/// Disposable lock fixtures always live under the checkout, never Application Support.
+pub struct TestLockDir(std::path::PathBuf);
+impl TestLockDir {
+    pub fn create() -> Self {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join(format!(
+            "zoom-lock-{}-{}", std::process::id(), NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+    pub fn path(&self) -> std::path::PathBuf { self.0.join("alacritty_zoom.lock") }
+}
+impl Drop for TestLockDir {
+    fn drop(&mut self) { std::fs::remove_dir_all(&self.0).unwrap(); }
 }

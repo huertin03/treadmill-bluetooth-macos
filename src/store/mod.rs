@@ -83,7 +83,7 @@ impl Store {
     }
 }
 
-fn db_path() -> Result<PathBuf> {
+pub(crate) fn db_path() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("$HOME not set")?;
     Ok(PathBuf::from(home)
         .join("Library/Application Support/treadmill-bluetooth-macos/treadmill.db"))

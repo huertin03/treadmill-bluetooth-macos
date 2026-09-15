@@ -137,7 +137,7 @@ async fn failed_revert_retries_without_warn_spam_and_recovers() {
         settle().await;
     }
     assert_eq!(fake.0.lock().unwrap().scans, 6);
-    assert_eq!(logs.count("WARN"), 1);
+    assert_eq!(logs.count("WARN"), 1, "{logs:?}");
     assert_eq!(fake.size(id), 14.625);
     fake.0.lock().unwrap().fail_discovery = false;
     tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
@@ -180,11 +180,46 @@ async fn persistent_rescan_error_warns_once() {
         tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
         settle().await;
     }
-    assert_eq!(logs.count("WARN"), 1);
+    assert_eq!(logs.count("WARN"), 1, "{logs:?}");
     fake.0.lock().unwrap().fail_discovery = false;
     tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
     settle().await;
     assert_eq!(logs.count("rescan recovered"), 1);
+    drop(handle);
+    task.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn sqlite_failure_retries_and_newer_base_intent_clears_pending_retry() {
+    let fake = Fake::default();
+    let id = fake.add(1, 10, 14.0);
+    let (handle, task) = spawn_worker(fake.clone(), enabled());
+    settle().await;
+    fake.0.lock().unwrap().fail_record_write = true;
+    handle.set_active(true);
+    settle().await;
+    fake.0.lock().unwrap().fail_record_write = false;
+    tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+    settle().await;
+    assert_eq!(fake.size(id), 14.625);
+    fake.0.lock().unwrap().fail_record_delete = true;
+    handle.set_active(false);
+    settle().await;
+    assert_eq!(fake.size(id), 14.0);
+    assert!(!fake.0.lock().unwrap().records.is_empty());
+    // The previous completed state is Zoomed, yet the failed revert changed the
+    // font. A newer active want must apply again despite matching that old state.
+    fake.0.lock().unwrap().fail_record_delete = false;
+    handle.set_active(true);
+    settle().await;
+    assert_eq!(fake.size(id), 14.625);
+    handle.set_active(false);
+    settle().await;
+    assert!(fake.0.lock().unwrap().records.is_empty());
+    let scans = fake.0.lock().unwrap().scans;
+    tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+    settle().await;
+    assert_eq!(fake.0.lock().unwrap().scans, scans);
     drop(handle);
     task.await.unwrap();
 }

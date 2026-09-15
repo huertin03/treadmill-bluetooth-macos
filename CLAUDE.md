@@ -36,6 +36,15 @@ This file is read by two different agents. Follow the branch that matches who yo
 
 ## Архитектура
 
+- `src/alacritty_zoom/` — font-only Alacritty zoom while walking: `ipc.rs`
+  discovers live process identities and runs bounded CLI calls; `retry.rs` verifies
+  delivery; `operations.rs` persists recovery records before writes, including
+  `previous_target_pt` during interrupted delta changes. `lock.rs` serializes CLI
+  and daemon operations with a non-blocking advisory lock next to the DB (40 s
+  async wait limit). `worker.rs` converges latest intent, retries whole-op failures,
+  and rescans late processes. Walking grows; Paused/session end reverts; stepping
+  off while the belt runs preserves zoom. Startup reconciles recorded processes;
+  initialization failure disables only zoom. CLI status never waits for the lock.
 - `src/main.rs` — точка входа и CLI (`scan` | `connect` | `daemon` | `stats` | ...).
 - `src/scan.rs` — обнаружение адаптера, скан, подключение, подписка на нотификации.
 - `src/ftms.rs` — константы Fitness Machine Service (`0x1826`) и парсинг Treadmill Data (`0x2ACD`).
@@ -359,6 +368,7 @@ cargo run -- recompute-hr        # вычистить hr_samples, записан
 cargo run -- default-speed  # показать расчётную дефолтную скорость на старте тренировки (без BLE; docs/tasks/016)
 cargo run -- hr        # диагностика: подключиться к HR-датчику, печатать заряд + live bpm (docs/tasks/025,026)
 cargo run -- zone      # Zone Hold: статус (без аргумента) или on/off/setup/limits/target/list/add/edit/remove/mode (docs/tasks/027)
+cargo run -- alacritty-zoom  # status/probe; on | off | pt <value> | preview | reset (docs/tasks/062)
 cargo run -- speed-widget  # показ живой скорости в виджете: статус (без аргумента) или on/off (docs/tasks/029)
 cargo run -- start / stop / toggle  # лента через очередь демона (toggle = задача 063)
 cargo run -- speed <kmh|up|down>    # абсолютная цель или ±0.1 relative (задача 063)
@@ -402,7 +412,8 @@ Zone Hold) — **per-user**, живёт **не в этом
 `config.json`/`goals.json`) — ради комментариев: дефолты в примере видны
 закомментированными строками. Формат — см. `config/config.example.toml`:
 `goals = [8000, 10000, 12000]` + опциональные `workout_gap_minutes` /
-`auto_pause_minutes` / `show_speed` / `led_on_connect` / `[zone_hold]` (задача 027, см.
+`auto_pause_minutes` / `show_speed` / `led_on_connect` /
+`alacritty_zoom` / `alacritty_zoom_pt` / `[zone_hold]` (задача 027, см.
 `src/zone_hold/` выше — секцию обычно пишет `tm zone on`/`setup`, не
 руки). Опциональный
 `workout_gap_minutes` (задача 014, дефолт 15) —
@@ -420,7 +431,13 @@ power-cycle с розетки; приложение делает то же). О�
 off`/`on`/`none`, не руки; hot-reload подхватывает ключ, пишет в ленту
 только на следующем коннекте. Отсутствует/битый ключ →
 дефолт (absent — тихо, т.к. `widget` читает раз в 2 с; невалидное значение →
-WARN). Резолвинг (задача 023, один путь): env `TREADMILL_CONFIG` →
+WARN). `alacritty_zoom` (default `false`) enables walking font automation;
+`alacritty_zoom_pt` (default `0.625`, finite `0 < pt ≤ 8`) sets the added points.
+Use `tm alacritty-zoom on|off`, `pt <value>`, `preview`, or `reset`; hot reload
+updates the active session within 5 s, and `off` restores fonts directly. Manual
+⌘=/⌘- blocks automation until ⌘0. Only `font.size` is overwritten: other runtime
+keys survive, but the restored base remains pinned until Alacritty restarts.
+Резолвинг (задача 023, один путь): env `TREADMILL_CONFIG` →
 `$HOME/.config/.../config.toml` → вшитые дефолты `[8000,10000,12000]` (JSON- и
 legacy-env-фолбэки задачи 021 убраны). Нет файла — норма (INFO + дефолты); битый
 файл — WARN. Каждый пользователь приносит свой файл (например, симлинком из

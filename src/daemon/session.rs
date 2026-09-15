@@ -26,6 +26,7 @@ use super::watchdog::Watchdog;
 use super::zone_write::execute_zone_write;
 
 use crate::activity::ActivityAccumulator;
+use crate::alacritty_zoom::{self, worker::AlacrittyZoom};
 use crate::auto_pause::AutoPause;
 use crate::belt_intent::BeltIntent;
 use crate::config;
@@ -66,6 +67,7 @@ pub(super) async fn stream_with_presence(
     watchdog: &Watchdog,
     on_ac: &mut bool,
     config: &mut LiveConfig,
+    zoom: &AlacrittyZoom,
     db_persist_failures: &mut u32,
 ) -> Result<()> {
     // Apply `led_on_connect` once per BLE session (задача 059). A reconnect
@@ -259,6 +261,9 @@ pub(super) async fn stream_with_presence(
                 if let Some(next_state) = accumulator.observe(Instant::now(), data.speed, data.steps) {
                     info!(?prev_state, ?next_state, "presence transition");
                     state.presence_state = Some(next_state.wire().to_string());
+                    if let Some(active) = alacritty_zoom::zoom_intent(next_state) {
+                        zoom.set_active(active);
+                    }
                     // Belt speed as Zone Hold should see it below: starts as this
                     // sample's raw telemetry (`None` when MORE_DATA omits speed —
                     // never fabricate 0.0, задача 036), but a restore/default-speed
@@ -526,7 +531,9 @@ pub(super) async fn stream_with_presence(
                             phase: zone.kind(),
                             walking: accumulator.state() == PresenceState::Walking,
                         };
+                        let old_zoom = config.alacritty_zoom;
                         let effects = config_apply::apply_config(config, delta, &snap);
+                        super::config::execute_zoom_effect(&effects, old_zoom, config.alacritty_zoom, zoom);
                         execute_config_effects(
                             &effects,
                             config,
