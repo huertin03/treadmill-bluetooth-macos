@@ -191,6 +191,11 @@ pub(super) async fn stream_with_presence(
                     let ts_ms = Utc::now().timestamp_millis();
                     if let Some(&event_code) = notification.value.first() {
                         info!(event = ftms::describe_status_event(event_code), code = event_code, "machine status event");
+                        // A console-button Stop is otherwise visible only through
+                        // decaying telemetry: block speed steps right away (задача 063).
+                        if ftms::is_stop_event(event_code) {
+                            intent.note_safety_stop(Instant::now());
+                        }
                         // Same rationale as the sample persist below: a busy DB
                         // must not kill the stream over an informational event.
                         if let Err(err) = store.insert_status_event(session_id, ts_ms, event_code, &notification.value) {

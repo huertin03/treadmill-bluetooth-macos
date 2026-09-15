@@ -30,6 +30,13 @@ pub const FITNESS_MACHINE_CONTROL_POINT: Uuid =
 /// presence heuristic.
 pub const FITNESS_MACHINE_STATUS: Uuid = Uuid::from_u128(0x00002ada_0000_1000_8000_00805f9b34fb);
 
+/// Machine Status op codes that mean the belt is stopping: `0x02` Stopped or
+/// Paused by User (the W2 Pro emits it — seen in `status_events`) and
+/// `0x03` Stopped by Safety Key. Feeds the speed-step guard (задача 063).
+pub fn is_stop_event(event_code: u8) -> bool {
+    matches!(event_code, 0x02 | 0x03)
+}
+
 /// Human-readable name for a Fitness Machine Status op code (first byte of
 /// the `0x2ADA` payload), for logging only — the raw code is what's persisted.
 ///
@@ -225,6 +232,15 @@ fn read_u24(buf: &[u8], cursor: &mut usize) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_events_are_user_stop_and_safety_key_only() {
+        assert!(is_stop_event(0x02));
+        assert!(is_stop_event(0x03));
+        for code in [0x01, 0x04, 0x05, 0xff] {
+            assert!(!is_stop_event(code), "code {code:#04x}");
+        }
+    }
 
     #[test]
     fn parses_speed_only() {
