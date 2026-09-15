@@ -33,6 +33,20 @@ derived from it.
   and best-effort uninstall reset. Manual live smoke and dotfiles changes remain
   orchestrator work. No live Alacritty is invoked by the tests.
 
+## P2 validation (2026-09-15)
+
+- Passed in order: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo build`, `cargo test`: **290 passed**, including 34 Alacritty zoom tests.
+- `shellcheck scripts/uninstall-daemon.sh` passed. Formatting is a separate commit.
+- Added whole-op retry/log-streak tests, SQLite failure/partial-revert recovery,
+  lock serialization/timeout, in-flight apply versus reset, busy read-only probe,
+  and config delta/effect coverage. Worker logging regressions passed five
+  consecutive parallel test runs after stabilizing test subscriber initialization.
+- Gates used `TMPDIR` under `target/`; fake IPC and lock fixtures never touch the
+  real Alacritty sockets, database, or Application Support directory.
+- Live smoke, daemon installation, and `ankor-dotfiles` follow-up remain pending
+  in the operator's orchestrator session.
+
 ## Context
 
 The operator reads the terminal while walking. Eyes move, so small text is tiring, and today they
