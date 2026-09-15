@@ -25,3 +25,13 @@ failure/timeout cleanup and resume precedence. Hardware timing/countdown and
 physical speed must be reviewed separately before this change is released.
 Do not install the development binary or send commands to a live treadmill
 as part of these tests. No incline changes.
+
+## Upstream relative-command integration
+
+Preserve task 063's daemon-side toggle/step resolution and FTMS stop-event
+handling. Successful explicit starts record both run and target intent after
+the write, so a rapid toggle stops during countdown and speed steps use the
+acknowledged target. Failed/timed-out explicit starts open the existing safety
+stop guard, including uncertain cleanup. Live zero and recent safety stops
+still refuse relative speed steps. Both telemetry and idle queue-drain paths
+carry the link and belt intent; neither bypasses relative-command resolution.

@@ -26,7 +26,9 @@ use super::watchdog::Watchdog;
 use super::zone_write::execute_zone_write;
 
 use crate::activity::ActivityAccumulator;
+use crate::alacritty_zoom::{self, worker::AlacrittyZoom};
 use crate::auto_pause::AutoPause;
+use crate::belt_intent::BeltIntent;
 use crate::config;
 use crate::config_apply::{self, LiveConfig};
 use crate::control_command::ControlCommand;
@@ -65,6 +67,7 @@ pub(super) async fn stream_with_presence(
     watchdog: &Watchdog,
     on_ac: &mut bool,
     config: &mut LiveConfig,
+    zoom: &AlacrittyZoom,
     db_persist_failures: &mut u32,
 ) -> Result<()> {
     // Apply `led_on_connect` once per BLE session (задача 059). A reconnect
@@ -105,6 +108,8 @@ pub(super) async fn stream_with_presence(
     // Seeded now so the (possibly slow) subscribe above does not count against
     // the silence arm; pairs with `watchdog.touch_telemetry()` above.
     let mut link = TreadmillLink::new(tokio::time::Instant::now());
+    // Relative CLI intents (задача 063): last target speed + last start/stop.
+    let mut intent = BeltIntent::new();
     // Zone Hold session (задача 027 / 053): phase + timers + override window.
     let mut zone = ZoneSession::new();
     // Backstop poll for queued control commands during quiet stretches; the
@@ -188,6 +193,11 @@ pub(super) async fn stream_with_presence(
                     let ts_ms = Utc::now().timestamp_millis();
                     if let Some(&event_code) = notification.value.first() {
                         info!(event = ftms::describe_status_event(event_code), code = event_code, "machine status event");
+                        // A console-button Stop is otherwise visible only through
+                        // decaying telemetry: block speed steps right away (задача 063).
+                        if ftms::is_stop_event(event_code) {
+                            intent.note_safety_stop(Instant::now());
+                        }
                         // Same rationale as the sample persist below: a busy DB
                         // must not kill the stream over an informational event.
                         if let Err(err) = store.insert_status_event(session_id, ts_ms, event_code, &notification.value) {
@@ -211,6 +221,12 @@ pub(super) async fn stream_with_presence(
                 link.on_frame_decoded(tokio_now);
                 watchdog.touch_telemetry();
                 logger.log(&data)?;
+                // Safety input for relative commands (задача 063): record the decoded
+                // speed before persistence — a stopped belt seen only in a frame whose
+                // persist is skipped below must not still look moving to `speed up`.
+                if let Some(speed) = data.speed {
+                    link.note_live_speed(speed);
+                }
                 // A failed per-sample persist must not tear down a healthy BLE
                 // link: skip the sample (the cumulative FTMS counters make the
                 // next successful `advance_baseline` recompute the full delta),
@@ -245,6 +261,9 @@ pub(super) async fn stream_with_presence(
                 if let Some(next_state) = accumulator.observe(Instant::now(), data.speed, data.steps) {
                     info!(?prev_state, ?next_state, "presence transition");
                     state.presence_state = Some(next_state.wire().to_string());
+                    if let Some(active) = alacritty_zoom::zoom_intent(next_state) {
+                        zoom.set_active(active);
+                    }
                     // Belt speed as Zone Hold should see it below: starts as this
                     // sample's raw telemetry (`None` when MORE_DATA omits speed —
                     // never fabricate 0.0, задача 036), but a restore/default-speed
@@ -269,8 +288,13 @@ pub(super) async fn stream_with_presence(
                                     // A real captured walking speed → restore it (задача 012).
                                     Some(pre_f32) => {
                                         let pre = CentiKmh::from_kmh_f32(pre_f32);
-                                        let restore =
-                                            try_restore_speed(peripheral, pre, resumed_speed).await;
+                                        let restore = try_restore_speed(
+                                            peripheral,
+                                            pre,
+                                            resumed_speed,
+                                            &mut intent,
+                                        )
+                                        .await;
                                         if let Some(r) = &restore {
                                             zh_effective = CentiKmh::from_kmh_f32(r.to_kmh);
                                         }
@@ -284,6 +308,7 @@ pub(super) async fn stream_with_presence(
                                         store,
                                         resumed_speed,
                                         &mut link,
+                                        &mut intent,
                                     )
                                     .await
                                     {
@@ -312,6 +337,7 @@ pub(super) async fn stream_with_presence(
                                     store,
                                     resumed_speed,
                                     &mut link,
+                                    &mut intent,
                                 )
                                 .await
                             {
@@ -384,7 +410,7 @@ pub(super) async fn stream_with_presence(
                     let now = Instant::now();
                     if auto_pause.due(config.auto_pause, now) {
                         let away_for = auto_pause.away_for(now).unwrap_or_default();
-                        match tokio::time::timeout(
+                        let stop_result = tokio::time::timeout(
                             SPEED_RESTORE_TIMEOUT,
                             execute_control_command(
                                 peripheral,
@@ -392,8 +418,11 @@ pub(super) async fn stream_with_presence(
                                 ControlSource::AutoPause,
                             ),
                         )
-                        .await
-                        {
+                        .await;
+                        // Even a failed/timed-out Stop may have reached the belt: block
+                        // speed steps for the intent window either way (задача 063).
+                        intent.note_safety_stop(Instant::now());
+                        match stop_result {
                             Ok(Ok(())) => {
                                 info!(
                                     away_s = away_for.as_secs(),
@@ -445,7 +474,7 @@ pub(super) async fn stream_with_presence(
                                 zone.persist_snapshot(state, &resolved, zh_bpm, measured);
                             }
                             if let Some(w) = write {
-                                execute_zone_write(peripheral, w).await;
+                                execute_zone_write(peripheral, w, &mut intent).await;
                             }
                         }
                         None => {
@@ -476,12 +505,16 @@ pub(super) async fn stream_with_presence(
                 // connected, so this bounds command latency to ≤1s during an
                 // active session (задача 013). The interval arm below is only a
                 // backstop for quiet stretches.
-                if process_control_commands(peripheral, store, &mut link).await? {
+                if process_control_commands(peripheral, store, &mut link, &mut intent)
+                    .await?
+                {
                     zone.note_cli_speed(Instant::now());
                 }
             }
             _ = command_tick.tick() => {
-                if process_control_commands(peripheral, store, &mut link).await? {
+                if process_control_commands(peripheral, store, &mut link, &mut intent)
+                    .await?
+                {
                     zone.note_cli_speed(Instant::now());
                 }
             }
@@ -498,7 +531,9 @@ pub(super) async fn stream_with_presence(
                             phase: zone.kind(),
                             walking: accumulator.state() == PresenceState::Walking,
                         };
+                        let old_zoom = config.alacritty_zoom;
                         let effects = config_apply::apply_config(config, delta, &snap);
+                        super::config::execute_zoom_effect(&effects, old_zoom, config.alacritty_zoom, zoom);
                         execute_config_effects(
                             &effects,
                             config,

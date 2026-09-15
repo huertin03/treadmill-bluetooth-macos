@@ -6,6 +6,8 @@
 //! key is silent (normal for configs written before that key existed); a
 //! present-but-malformed value is a `WARN` and the compiled default is used.
 
+pub mod alacritty_zoom;
+pub use alacritty_zoom::load_alacritty_zoom;
 pub mod auto_pause;
 pub mod file;
 pub mod led_on_connect;

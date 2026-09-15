@@ -20,6 +20,8 @@
 //! resumes delta accounting without double-counting or losing progress.
 
 mod activity;
+mod alacritty_zoom;
+pub use alacritty_zoom::ZoomRecord;
 mod control_queue;
 mod samples;
 mod schema;
@@ -81,7 +83,7 @@ impl Store {
     }
 }
 
-fn db_path() -> Result<PathBuf> {
+pub(crate) fn db_path() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("$HOME not set")?;
     Ok(PathBuf::from(home)
         .join("Library/Application Support/treadmill-bluetooth-macos/treadmill.db"))

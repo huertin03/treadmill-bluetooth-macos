@@ -16,6 +16,15 @@ impl Store {
         self.conn
             .execute_batch(
                 "
+                CREATE TABLE IF NOT EXISTS alacritty_zoom (
+                    pid INTEGER PRIMARY KEY,
+                    started_at_us INTEGER NOT NULL,
+                    socket TEXT NOT NULL,
+                    base_pt REAL NOT NULL,
+                    target_pt REAL NOT NULL,
+                    previous_target_pt REAL,
+                    applied_at_ms INTEGER NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS sessions (
                     id INTEGER PRIMARY KEY,
                     started_at TEXT NOT NULL,
@@ -301,6 +310,14 @@ TABLE activity_segments
   activity_segments.distance_m:INTEGER:notnull=1:default=0
   activity_segments.steps:INTEGER:notnull=1:default=0
   activity_segments.walking_time_s:INTEGER:notnull=1:default=0
+TABLE alacritty_zoom
+  alacritty_zoom.pid:INTEGER:notnull=0:default=
+  alacritty_zoom.started_at_us:INTEGER:notnull=1:default=
+  alacritty_zoom.socket:TEXT:notnull=1:default=
+  alacritty_zoom.base_pt:REAL:notnull=1:default=
+  alacritty_zoom.target_pt:REAL:notnull=1:default=
+  alacritty_zoom.previous_target_pt:REAL:notnull=0:default=
+  alacritty_zoom.applied_at_ms:INTEGER:notnull=1:default=
 TABLE control_commands
   control_commands.id:INTEGER:notnull=0:default=
   control_commands.created_at:TEXT:notnull=1:default=

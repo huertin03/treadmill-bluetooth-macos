@@ -296,6 +296,7 @@ pub(crate) fn run_status() -> Result<()> {
                     "config (in daemon): goals {goals_desc} · auto-pause {auto_pause} · read {}",
                     describe_timestamp(loaded_at)
                 );
+                super::alacritty_zoom::print_setting(config::load_alacritty_zoom());
                 // The workout-gap is read-time (задача 014) — the CLI resolves it
                 // itself, the daemon does not hold it; shown here for completeness.
                 println!(

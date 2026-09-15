@@ -25,6 +25,10 @@ fi
 # someone else's `tm` that happens to sit at the same path.
 link="$LINK_DIR/$LINK_NAME"
 if [[ -L "$link" && "$(readlink "$link")" == *"/${BIN_NAME}" ]]; then
+  config_path="$HOME/.config/treadmill-bluetooth-macos/config.toml"
+  if [[ -f "$config_path" ]] && grep -Eq '^[[:space:]]*alacritty_zoom[[:space:]]*=[[:space:]]*true([[:space:]]*(#.*)?)?$' "$config_path"; then
+    "$link" alacritty-zoom reset || true
+  fi
   rm "$link"
   echo "removed: $link"
 fi

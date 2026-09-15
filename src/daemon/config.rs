@@ -33,6 +33,8 @@ pub(super) fn execute_config_effects(
 
     for effect in effects {
         match effect {
+            // Executed separately with the previous config and zoom handle.
+            ConfigEffect::AlacrittyZoomChanged => {}
             ConfigEffect::GoalsChanged => {
                 info!(
                     goals = ?config.goals,
@@ -114,4 +116,18 @@ pub(super) fn execute_config_effects(
             }
         }
     }
+}
+
+/// Keep zoom IO out of the pure config planner and BLE effect executor.
+pub(super) fn execute_zoom_effect(
+    effects: &[config_apply::ConfigEffect],
+    old: crate::alacritty_zoom::ZoomConfig,
+    new: crate::alacritty_zoom::ZoomConfig,
+    zoom: &crate::alacritty_zoom::worker::AlacrittyZoom,
+) {
+    if !effects.contains(&config_apply::ConfigEffect::AlacrittyZoomChanged) {
+        return;
+    }
+    info!(?old, ?new, "Alacritty zoom config changed on disk");
+    zoom.set_config(new);
 }

@@ -17,6 +17,24 @@ use chrono::{DateTime, Utc};
 use crate::led::LedState;
 use crate::speed::CentiKmh;
 
+/// Relative speed step queued as `speed_step:up` / `speed_step:down` (задача 063).
+/// Resolved against daemon intent memory at execute time, never in the CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepDirection {
+    Up,
+    Down,
+}
+
+impl StepDirection {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
+}
+
 /// How old a queued command may get before the daemon refuses to execute it.
 ///
 /// A command queued long ago (or while the daemon was disconnected) must NOT
@@ -36,22 +54,35 @@ pub enum ControlCommand {
     StartAt(CentiKmh),
     Stop,
     Speed(CentiKmh),
+    SpeedStep(StepDirection),
+    Toggle,
     Led(LedState),
 }
 
 impl ControlCommand {
     /// Compact string persisted in `control_commands.command`: `start`,
-    /// `start-speed:<kmh>`, `stop`, `speed:<kmh>` (e.g. `speed:2.5`),
-    /// or `led:on`/`led:off`.
-    /// Human-readable km/h outside; [`CentiKmh`] inside.
+    /// `start-speed:<kmh>`, `stop`, `toggle`, `speed:<kmh>`, `speed_step:up` /
+    /// `speed_step:down`, or `led:on`/`led:off`. Human-readable km/h outside;
+    /// [`CentiKmh`] inside. Relative forms (`toggle`, `speed_step:*`) are
+    /// resolved by the daemon (задача 063).
     pub fn to_wire(self) -> String {
         match self {
             Self::Start => "start".to_string(),
             Self::StartAt(speed) => format!("start-speed:{speed}"),
             Self::Stop => "stop".to_string(),
+            Self::Toggle => "toggle".to_string(),
             Self::Speed(speed) => format!("speed:{speed}"),
+            Self::SpeedStep(dir) => format!("speed_step:{}", dir.as_str()),
             Self::Led(state) => format!("led:{state}"),
         }
+    }
+
+    /// Relative intents (`toggle`, `speed_step:*`) need the daemon's live
+    /// telemetry and intent memory; the CLI must not fall back to a direct
+    /// BLE write for them.
+    #[must_use]
+    pub fn requires_daemon_intent(self) -> bool {
+        matches!(self, Self::SpeedStep(_) | Self::Toggle)
     }
 
     /// Parse the wire form back into a command. Errors (rather than silently
@@ -61,6 +92,9 @@ impl ControlCommand {
         match wire {
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
+            "toggle" => Ok(Self::Toggle),
+            "speed_step:up" => Ok(Self::SpeedStep(StepDirection::Up)),
+            "speed_step:down" => Ok(Self::SpeedStep(StepDirection::Down)),
             other => {
                 if let Some(raw) = other.strip_prefix("start-speed:") {
                     return crate::start_speed::parse_target(raw).map(Self::StartAt);
@@ -115,7 +149,10 @@ mod tests {
             ControlCommand::Start,
             ControlCommand::StartAt(CentiKmh::from_wire(400)),
             ControlCommand::Stop,
+            ControlCommand::Toggle,
             ControlCommand::Speed(CentiKmh::from_wire(250)),
+            ControlCommand::SpeedStep(StepDirection::Up),
+            ControlCommand::SpeedStep(StepDirection::Down),
             ControlCommand::Led(LedState::On),
             ControlCommand::Led(LedState::Off),
         ] {
@@ -132,6 +169,15 @@ mod tests {
         );
         assert_eq!(ControlCommand::Start.to_wire(), "start");
         assert_eq!(ControlCommand::Stop.to_wire(), "stop");
+        assert_eq!(ControlCommand::Toggle.to_wire(), "toggle");
+        assert_eq!(
+            ControlCommand::SpeedStep(StepDirection::Up).to_wire(),
+            "speed_step:up"
+        );
+        assert_eq!(
+            ControlCommand::SpeedStep(StepDirection::Down).to_wire(),
+            "speed_step:down"
+        );
         assert_eq!(ControlCommand::Led(LedState::On).to_wire(), "led:on");
         assert_eq!(ControlCommand::Led(LedState::Off).to_wire(), "led:off");
     }
@@ -152,6 +198,21 @@ mod tests {
         assert!(ControlCommand::parse("led:").is_err());
         assert!(ControlCommand::parse("led:maybe").is_err());
         assert!(ControlCommand::parse("led").is_err());
+        assert!(ControlCommand::parse("speed_step:").is_err());
+        assert!(ControlCommand::parse("speed_step:left").is_err());
+        assert!(ControlCommand::parse("toggle:on").is_err());
+        assert!(ControlCommand::parse("speed_step").is_err());
+    }
+
+    #[test]
+    fn relative_commands_require_daemon_intent() {
+        assert!(ControlCommand::Toggle.requires_daemon_intent());
+        assert!(ControlCommand::SpeedStep(StepDirection::Up).requires_daemon_intent());
+        assert!(ControlCommand::SpeedStep(StepDirection::Down).requires_daemon_intent());
+        assert!(!ControlCommand::Start.requires_daemon_intent());
+        assert!(!ControlCommand::Stop.requires_daemon_intent());
+        assert!(!ControlCommand::Speed(CentiKmh::from_wire(250)).requires_daemon_intent());
+        assert!(!ControlCommand::Led(LedState::On).requires_daemon_intent());
     }
 
     #[test]

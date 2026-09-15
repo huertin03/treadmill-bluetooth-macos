@@ -36,6 +36,15 @@ This file is read by two different agents. Follow the branch that matches who yo
 
 ## Архитектура
 
+- `src/alacritty_zoom/` — font-only Alacritty zoom while walking: `ipc.rs`
+  discovers live process identities and runs bounded CLI calls; `retry.rs` verifies
+  delivery; `operations.rs` persists recovery records before writes, including
+  `previous_target_pt` during interrupted delta changes. `lock.rs` serializes CLI
+  and daemon operations with a non-blocking advisory lock next to the DB (40 s
+  async wait limit). `worker.rs` converges latest intent, retries whole-op failures,
+  and rescans late processes. Walking grows; Paused/session end reverts; stepping
+  off while the belt runs preserves zoom. Startup reconciles recorded processes;
+  initialization failure disables only zoom. CLI status never waits for the lock.
 - `src/main.rs` — точка входа и CLI (`scan` | `connect` | `daemon` | `stats` | ...).
 - `src/scan.rs` — обнаружение адаптера, скан, подключение, подписка на нотификации.
 - `src/ftms.rs` — константы Fitness Machine Service (`0x1826`) и парсинг Treadmill Data (`0x2ACD`).
@@ -81,9 +90,18 @@ This file is read by two different agents. Follow the branch that matches who yo
   `Off` всегда праймится `On` + 100 мс (задача 061): прошивка реагирует только на
   переход своего LED-флага, который сбрасывается в off при power-cycle, пока
   лента физически загорается — голый `off` тогда молча no-op.
-- `src/control_command.rs` — `ControlCommand` тип (`start`/`stop`/`speed:<kmh>` /
-  `led:on`/`led:off`), `Speed(CentiKmh)`, `Led(LedState)`; текстовый wire-формат
-  очереди без изменений (задача 013/054/058).
+- `src/control_command.rs` — `ControlCommand` тип (`start`/`stop`/`toggle` /
+  `speed:<kmh>` / `speed_step:up|down` / `led:on`/`led:off`), `Speed(CentiKmh)`,
+  `SpeedStep`, `Toggle`, `Led(LedState)`; текстовый wire-формат очереди без
+  schema change (задача 013/054/058/063). Relative `toggle`/`speed_step:*`
+  резолвятся демоном, не CLI.
+- `src/belt_intent.rs` — intent memory для relative CLI-команд (задача 063):
+  last target speed + last start/stop, окно `INTENT_WINDOW` 5 с. Резолвит
+  `speed_step:up|down` и `toggle` в момент execute, чтобы быстрые нажатия
+  суммировались. Чистый, время инъекцией. `SPEED_STEP` = 0.1 km/h, clamp
+  `[SPEED_MIN, SPEED_MAX]` (0.50–6.10). `note_speed` на каждом успешном
+  speed-write (CLI / restore / default / Zone Hold); `note_run` только на
+  CLI start/stop/toggle (не auto-pause).
 - `src/led.rs` — Yesoul ambient LED strip (задача 058): `LedState` (`on`/`off`),
   `led_frame` (`F0 10 02` / `F0 10 01`), GATT `0xFFF0`/`0xFFF2`. Не FitShow-кадр
   (нет конверта `02 … xor 03`). Никогда не пишет `0xFF00`/`0xFF01`/`0xFAB*` и
@@ -128,9 +146,12 @@ This file is read by two different agents. Follow the branch that matches who yo
   `current_segment=None`) в presence-переходе при уходе из `Walking` (задача 014);
   на resume после паузы авто-восстанавливает pre-pause скорость ленты через
   `control.rs` (bounded BLE-write, см. `docs/tasks/012`).
-  Единственный владелец BLE-линка: команды управления (`tm speed`/`start`/`stop`)
-  от CLI идут через SQLite-очередь `control_commands` и исполняются здесь на живом
-  подключении (задача 013). CLI напрямую открывает BLE только если демон не держит линк.
+  Единственный владелец BLE-линка: команды управления (`tm speed`/`start`/`stop`/
+  `toggle`/`speed up|down`) от CLI идут через SQLite-очередь `control_commands` и
+  исполняются здесь на живом подключении (задача 013/063). Relative `toggle` и
+  `speed_step:*` резолвятся в `commands.rs` через `BeltIntent` + live speed;
+  CLI напрямую открывает BLE только если демон не держит линк, и **не** для
+  relative-команд (им нужны телеметрия и intent memory).
   Авто-пауза простаивающей ленты (задача 020): если `AwayWhileRunning` длится
   дольше `auto_pause_minutes` (дефолт 5, `0` — выкл.), демон шлёт `Stop` (тот же
   bounded Control-Point round-trip), лента гаснет своим встроенным shutoff'ом;
@@ -139,7 +160,8 @@ This file is read by two different agents. Follow the branch that matches who yo
   retry cooldown; время инъекцией.
 - `src/treadmill_link.rs` — `TreadmillLink` (задача 053): silence clock
   (`silence_deadline` / absolute `sleep_until`), speed history + cruising,
-  pause/resume memory, once-per-session default-speed flag.
+  pause/resume memory, once-per-session default-speed flag, last decoded live
+  speed `Option<CentiKmh>` (задача 063; сбрасывается с сессией).
 - `src/hr_session.rs` — `HrSession` (задача 053/025/033): HR link + contact +
   battery + connect latch; `link_up` paired with shell `hr_notifications`;
   invariant `hr_connected=false ⇒ last_bpm=None`.
@@ -346,7 +368,10 @@ cargo run -- recompute-hr        # вычистить hr_samples, записан
 cargo run -- default-speed  # показать расчётную дефолтную скорость на старте тренировки (без BLE; docs/tasks/016)
 cargo run -- hr        # диагностика: подключиться к HR-датчику, печатать заряд + live bpm (docs/tasks/025,026)
 cargo run -- zone      # Zone Hold: статус (без аргумента) или on/off/setup/limits/target/list/add/edit/remove/mode (docs/tasks/027)
+cargo run -- alacritty-zoom  # status/probe; on | off | pt <value> | preview | reset (docs/tasks/062)
 cargo run -- speed-widget  # показ живой скорости в виджете: статус (без аргумента) или on/off (docs/tasks/029)
+cargo run -- start / stop / toggle  # лента через очередь демона (toggle = задача 063)
+cargo run -- speed <kmh|up|down>    # абсолютная цель или ±0.1 relative (задача 063)
 cargo run -- led on|off    # ambient LED strip via daemon queue or direct BLE (задача 058)
 cargo run -- led default   # on-connect strip default: status (no arg) or off|on|none (задача 059)
 cargo run -- discover / sniff / fitshow-probe / fitshow-set  # reverse-engineering helpers (FitShow framing in fitshow.rs)
@@ -387,7 +412,8 @@ Zone Hold) — **per-user**, живёт **не в этом
 `config.json`/`goals.json`) — ради комментариев: дефолты в примере видны
 закомментированными строками. Формат — см. `config/config.example.toml`:
 `goals = [8000, 10000, 12000]` + опциональные `workout_gap_minutes` /
-`auto_pause_minutes` / `show_speed` / `led_on_connect` / `[zone_hold]` (задача 027, см.
+`auto_pause_minutes` / `show_speed` / `led_on_connect` /
+`alacritty_zoom` / `alacritty_zoom_pt` / `[zone_hold]` (задача 027, см.
 `src/zone_hold/` выше — секцию обычно пишет `tm zone on`/`setup`, не
 руки). Опциональный
 `workout_gap_minutes` (задача 014, дефолт 15) —
@@ -405,7 +431,13 @@ power-cycle с розетки; приложение делает то же). О�
 off`/`on`/`none`, не руки; hot-reload подхватывает ключ, пишет в ленту
 только на следующем коннекте. Отсутствует/битый ключ →
 дефолт (absent — тихо, т.к. `widget` читает раз в 2 с; невалидное значение →
-WARN). Резолвинг (задача 023, один путь): env `TREADMILL_CONFIG` →
+WARN). `alacritty_zoom` (default `false`) enables walking font automation;
+`alacritty_zoom_pt` (default `0.625`, finite `0 < pt ≤ 8`) sets the added points.
+Use `tm alacritty-zoom on|off`, `pt <value>`, `preview`, or `reset`; hot reload
+updates the active session within 5 s, and `off` restores fonts directly. Manual
+⌘=/⌘- blocks automation until ⌘0. Only `font.size` is overwritten: other runtime
+keys survive, but the restored base remains pinned until Alacritty restarts.
+Резолвинг (задача 023, один путь): env `TREADMILL_CONFIG` →
 `$HOME/.config/.../config.toml` → вшитые дефолты `[8000,10000,12000]` (JSON- и
 legacy-env-фолбэки задачи 021 убраны). Нет файла — норма (INFO + дефолты); битый
 файл — WARN. Каждый пользователь приносит свой файл (например, симлинком из
