@@ -1,11 +1,14 @@
 //! Pause-resume and default-speed belt writes (задачи 012/016).
 
+use std::time::Instant;
+
 use anyhow::Result;
 use btleplug::platform::Peripheral;
 use tracing::{info, warn};
 
 use super::SPEED_RESTORE_TIMEOUT;
 use super::commands::ControlSource;
+use crate::belt_intent::BeltIntent;
 use crate::config;
 use crate::control::Controller;
 use crate::default_speed;
@@ -48,6 +51,7 @@ pub(super) async fn try_restore_speed(
     peripheral: &Peripheral,
     pre_pause: Option<CentiKmh>,
     resumed: CentiKmh,
+    intent: &mut BeltIntent,
 ) -> Option<notify::SpeedRestore> {
     let Some(pre_pause) = pre_pause else {
         // Daemon started already paused, or the pause preceded any walking.
@@ -65,6 +69,7 @@ pub(super) async fn try_restore_speed(
                 control_source = source.as_str(),
                 "restored pre-pause belt speed on resume"
             );
+            intent.note_speed(target, Instant::now());
             Some(notify::SpeedRestore {
                 from_kmh: resumed.to_kmh_f32(),
                 to_kmh: target.to_kmh_f32(),
@@ -111,6 +116,7 @@ pub(super) async fn try_apply_default_speed(
     store: &Store,
     resumed: CentiKmh,
     link: &mut TreadmillLink,
+    intent: &mut BeltIntent,
 ) -> Option<CentiKmh> {
     if link.default_speed_applied() {
         return None;
@@ -161,6 +167,7 @@ pub(super) async fn try_apply_default_speed(
                 control_source = source.as_str(),
                 "applied computed default belt speed at workout start"
             );
+            intent.note_speed(target, Instant::now());
             Some(target)
         }
         Ok(Err(err)) => {

@@ -1,12 +1,15 @@
 //! Treadmill BLE-link session state (задача 053).
 //!
 //! Owns the telemetry silence clock (`last_telemetry_at`) and speed memory used
-//! for pause/resume restore and once-per-session default-speed apply. Time is
-//! always injected — no `*::now()` inside methods. Watchdog `touch_telemetry`
-//! stays on the call site (those clocks are not ours).
+//! for pause/resume restore, once-per-session default-speed apply, and the last
+//! decoded live speed for relative CLI commands (задача 063). Time is always
+//! injected — no `*::now()` inside methods. Watchdog `touch_telemetry` stays on
+//! the call site (those clocks are not ours).
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+
+use crate::speed::CentiKmh;
 
 /// How long to wait for the next Treadmill Data sample before treating the
 /// link as lost. The device streams ~1/s even while stationary.
@@ -36,6 +39,7 @@ pub struct TreadmillLink {
     last_telemetry_at: tokio::time::Instant,
     speed_history: VecDeque<(Instant, f32)>,
     last_walking_speed: Option<f32>,
+    live_speed: Option<CentiKmh>,
     pre_pause_speed: Option<f32>,
     paused_since: Option<Instant>,
     default_speed_applied: bool,
@@ -50,6 +54,7 @@ impl TreadmillLink {
             last_telemetry_at: tokio_now,
             speed_history: VecDeque::new(),
             last_walking_speed: None,
+            live_speed: None,
             pre_pause_speed: None,
             paused_since: None,
             default_speed_applied: false,
@@ -113,6 +118,19 @@ impl TreadmillLink {
     #[must_use]
     pub fn last_walking_speed(&self) -> Option<f32> {
         self.last_walking_speed
+    }
+
+    /// Last decoded `0x2ACD` speed, including zero (belt stopped). `None`
+    /// until the first sample that carries speed; MORE_DATA splits that omit
+    /// it leave the previous value. Dropped with the session on link loss.
+    #[must_use]
+    pub fn live_speed(&self) -> Option<CentiKmh> {
+        self.live_speed
+    }
+
+    /// Keep the last decoded speed next to `state.last_speed_kmh` (задача 063).
+    pub fn note_live_speed(&mut self, speed: CentiKmh) {
+        self.live_speed = Some(speed);
     }
 
     #[must_use]
@@ -299,6 +317,16 @@ mod tests {
         assert!(!link.default_speed_applied());
         link.mark_default_speed_applied();
         assert!(link.default_speed_applied());
+    }
+
+    #[test]
+    fn note_live_speed_keeps_last_including_zero() {
+        let mut link = TreadmillLink::new(tokio::time::Instant::from_std(Instant::now()));
+        assert_eq!(link.live_speed(), None);
+        link.note_live_speed(CentiKmh::from_wire(320));
+        assert_eq!(link.live_speed(), Some(CentiKmh::from_wire(320)));
+        link.note_live_speed(CentiKmh::ZERO);
+        assert_eq!(link.live_speed(), Some(CentiKmh::ZERO));
     }
 
     /// The telemetry deadline must survive `select!` rebuilding its arm on every

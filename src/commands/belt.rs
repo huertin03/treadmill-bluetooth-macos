@@ -1,5 +1,6 @@
-//! Belt control commands (`start`/`stop`/`speed`/`incline`/`led`) and dispatch.
+//! Belt control commands (`start`/`stop`/`speed`/`incline`/`led`/`toggle`) and dispatch.
 
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
@@ -8,11 +9,49 @@ use tracing::info;
 
 use crate::commands::common::{daemon_process_alive, daemon_status_fresh};
 use crate::control;
-use crate::control_command::ControlCommand;
+use crate::control_command::{ControlCommand, StepDirection};
 use crate::led::LedState;
 use crate::scan;
 use crate::speed::CentiKmh;
 use crate::store;
+
+/// Positional argument for `tm speed`: absolute km/h, or a relative step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SpeedTarget {
+    Absolute(CentiKmh),
+    Up,
+    Down,
+}
+
+impl SpeedTarget {
+    #[must_use]
+    pub(crate) fn into_command(self) -> ControlCommand {
+        match self {
+            Self::Absolute(speed) => ControlCommand::Speed(speed),
+            Self::Up => ControlCommand::SpeedStep(StepDirection::Up),
+            Self::Down => ControlCommand::SpeedStep(StepDirection::Down),
+        }
+    }
+}
+
+impl FromStr for SpeedTarget {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "up" => Ok(Self::Up),
+            "down" => Ok(Self::Down),
+            other => {
+                let kmh: f32 = other.parse().map_err(|_| {
+                    format!("invalid speed {other:?}; expected km/h, up, or down")
+                })?;
+                CentiKmh::from_kmh_f32(kmh)
+                    .map(Self::Absolute)
+                    .ok_or_else(|| format!("speed {kmh} km/h out of range"))
+            }
+        }
+    }
+}
 
 /// How long the CLI waits for the daemon to run an enqueued command before
 /// giving up. Comfortably above the daemon's ≤1s pick-up plus one
@@ -35,6 +74,13 @@ pub(crate) async fn run_control(command: ControlCommand) -> Result<()> {
         return enqueue_and_wait(&store, command).await;
     }
 
+    if command.requires_daemon_intent() {
+        bail!(
+            "{} needs the daemon holding the treadmill link (live speed and intent memory); start the daemon first",
+            command.to_wire()
+        );
+    }
+
     info!("daemon not holding the link — sending command over a direct connection");
     let adapter = scan::first_adapter().await?;
     let mapped = match command {
@@ -42,6 +88,9 @@ pub(crate) async fn run_control(command: ControlCommand) -> Result<()> {
         ControlCommand::Stop => Command::Stop,
         ControlCommand::Speed(speed) => Command::Speed(speed),
         ControlCommand::Led(state) => Command::Led(state),
+        ControlCommand::SpeedStep(_) | ControlCommand::Toggle => {
+            unreachable!("relative commands bailed before the direct-BLE path")
+        }
     };
     run_command(&adapter, mapped).await?;
     println!("{}", describe_control_success(&command));
@@ -103,7 +152,10 @@ pub(crate) fn describe_control_success(command: &ControlCommand) -> String {
     match command {
         ControlCommand::Start => "belt started".to_string(),
         ControlCommand::Stop => "belt stopped".to_string(),
+        ControlCommand::Toggle => "belt toggled".to_string(),
         ControlCommand::Speed(speed) => format!("speed set to {speed} km/h"),
+        ControlCommand::SpeedStep(StepDirection::Up) => "speed stepped up".to_string(),
+        ControlCommand::SpeedStep(StepDirection::Down) => "speed stepped down".to_string(),
         ControlCommand::Led(state) => format!("led strip turned {state}"),
     }
 }
@@ -128,4 +180,54 @@ pub(crate) async fn run_command(adapter: &Adapter, command: Command) -> Result<(
         Command::Led(state) => controller.set_led(state).await?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speed_target_parses_absolute_up_and_down() {
+        assert_eq!(
+            "3.2".parse::<SpeedTarget>().unwrap(),
+            SpeedTarget::Absolute(CentiKmh::from_wire(320))
+        );
+        assert_eq!("up".parse::<SpeedTarget>().unwrap(), SpeedTarget::Up);
+        assert_eq!("down".parse::<SpeedTarget>().unwrap(), SpeedTarget::Down);
+        assert!("UP".parse::<SpeedTarget>().is_err());
+        assert!("fast".parse::<SpeedTarget>().is_err());
+        assert!("-1".parse::<SpeedTarget>().is_err());
+    }
+
+    #[test]
+    fn speed_target_maps_to_control_commands() {
+        assert_eq!(
+            SpeedTarget::Absolute(CentiKmh::from_wire(250)).into_command(),
+            ControlCommand::Speed(CentiKmh::from_wire(250))
+        );
+        assert_eq!(
+            SpeedTarget::Up.into_command(),
+            ControlCommand::SpeedStep(StepDirection::Up)
+        );
+        assert_eq!(
+            SpeedTarget::Down.into_command(),
+            ControlCommand::SpeedStep(StepDirection::Down)
+        );
+    }
+
+    #[test]
+    fn describe_control_success_covers_relative_commands() {
+        assert_eq!(
+            describe_control_success(&ControlCommand::SpeedStep(StepDirection::Up)),
+            "speed stepped up"
+        );
+        assert_eq!(
+            describe_control_success(&ControlCommand::SpeedStep(StepDirection::Down)),
+            "speed stepped down"
+        );
+        assert_eq!(
+            describe_control_success(&ControlCommand::Toggle),
+            "belt toggled"
+        );
+    }
 }

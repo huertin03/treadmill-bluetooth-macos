@@ -5,6 +5,7 @@
 
 mod activity;
 mod auto_pause;
+mod belt_intent;
 mod commands;
 mod config;
 mod config_apply;
@@ -38,7 +39,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use crate::commands::belt::{Command, run_command};
+use crate::commands::belt::{Command, SpeedTarget, run_command};
 use crate::commands::{
     refuse_if_daemon_live, run_connect, run_control, run_daemon, run_default_speed, run_discover,
     run_doctor, run_fitshow_probe, run_fitshow_set, run_hr, run_notify_test, run_sniff, run_stats,
@@ -124,10 +125,13 @@ enum Commands {
     Start,
     /// Stop the belt via the FTMS Control Point.
     Stop,
-    /// Set target speed, km/h.
+    /// Start the belt if stopped, stop it if moving (задача 063). Needs the
+    /// daemon holding the link (live speed + intent memory).
+    Toggle,
+    /// Set target speed, km/h, or step `up`/`down` by 0.1 (задача 063).
     Speed {
-        /// Target speed in km/h.
-        kmh: f32,
+        /// Target speed in km/h, or `up`/`down`.
+        target: SpeedTarget,
     },
     /// Toggle the ambient LED strip, or set the on-connect default (задачи 058/059).
     Led {
@@ -326,10 +330,11 @@ async fn main() -> Result<()> {
     if let Commands::Stop = command {
         return run_control(ControlCommand::Stop).await;
     }
-    if let Commands::Speed { kmh } = command {
-        let speed = crate::speed::CentiKmh::from_kmh_f32(kmh)
-            .ok_or_else(|| anyhow::anyhow!("speed {kmh} km/h out of range"))?;
-        return run_control(ControlCommand::Speed(speed)).await;
+    if let Commands::Toggle = command {
+        return run_control(ControlCommand::Toggle).await;
+    }
+    if let Commands::Speed { target } = command {
+        return run_control(target.into_command()).await;
     }
     if let Commands::Led { action } = command {
         return crate::commands::led::run_led(action).await;
@@ -364,6 +369,7 @@ async fn main() -> Result<()> {
         | Commands::SpeedWidget { .. }
         | Commands::Start
         | Commands::Stop
+        | Commands::Toggle
         | Commands::Speed { .. }
         | Commands::Led { .. } => {
             unreachable!("handled above, before the adapter was opened")

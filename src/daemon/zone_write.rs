@@ -1,23 +1,30 @@
 //! Zone Hold BLE side-effects from pure [`ZoneWrite`] decisions (задача 053).
 
+use std::time::Instant;
+
 use btleplug::platform::Peripheral;
 use tracing::{info, warn};
 
 use super::SPEED_RESTORE_TIMEOUT;
 use super::commands::{ControlSource, execute_control_command};
 use super::speed::restore_speed;
+use crate::belt_intent::BeltIntent;
 use crate::control_command::ControlCommand;
 use crate::speed::CentiKmh;
 use crate::zone_session::ZoneWrite;
 
 /// Execute a pure [`ZoneWrite`] from [`ZoneSession::tick`] (BLE effect side).
-pub(super) async fn execute_zone_write(peripheral: &Peripheral, write: ZoneWrite) {
+pub(super) async fn execute_zone_write(
+    peripheral: &Peripheral,
+    write: ZoneWrite,
+    intent: &mut BeltIntent,
+) {
     match write {
         ZoneWrite::SetSpeed { target } => {
-            apply_zone_hold_speed(peripheral, target, false).await;
+            apply_zone_hold_speed(peripheral, target, false, intent).await;
         }
         ZoneWrite::Suppressed { target } => {
-            apply_zone_hold_speed(peripheral, target, true).await;
+            apply_zone_hold_speed(peripheral, target, true, intent).await;
         }
         ZoneWrite::Stop => {
             let _ = tokio::time::timeout(
@@ -39,6 +46,7 @@ pub(super) async fn apply_zone_hold_speed(
     peripheral: &Peripheral,
     target: CentiKmh,
     suppressed: bool,
+    intent: &mut BeltIntent,
 ) {
     let source = ControlSource::Zone;
     if suppressed {
@@ -50,11 +58,14 @@ pub(super) async fn apply_zone_hold_speed(
         return;
     }
     match tokio::time::timeout(SPEED_RESTORE_TIMEOUT, restore_speed(peripheral, target)).await {
-        Ok(Ok(())) => info!(
-            %target,
-            control_source = source.as_str(),
-            "zone hold: applied speed correction"
-        ),
+        Ok(Ok(())) => {
+            info!(
+                %target,
+                control_source = source.as_str(),
+                "zone hold: applied speed correction"
+            );
+            intent.note_speed(target, Instant::now());
+        }
         Ok(Err(err)) => {
             warn!(
                 %err,

@@ -81,9 +81,18 @@ This file is read by two different agents. Follow the branch that matches who yo
   `Off` всегда праймится `On` + 100 мс (задача 061): прошивка реагирует только на
   переход своего LED-флага, который сбрасывается в off при power-cycle, пока
   лента физически загорается — голый `off` тогда молча no-op.
-- `src/control_command.rs` — `ControlCommand` тип (`start`/`stop`/`speed:<kmh>` /
-  `led:on`/`led:off`), `Speed(CentiKmh)`, `Led(LedState)`; текстовый wire-формат
-  очереди без изменений (задача 013/054/058).
+- `src/control_command.rs` — `ControlCommand` тип (`start`/`stop`/`toggle` /
+  `speed:<kmh>` / `speed_step:up|down` / `led:on`/`led:off`), `Speed(CentiKmh)`,
+  `SpeedStep`, `Toggle`, `Led(LedState)`; текстовый wire-формат очереди без
+  schema change (задача 013/054/058/063). Relative `toggle`/`speed_step:*`
+  резолвятся демоном, не CLI.
+- `src/belt_intent.rs` — intent memory для relative CLI-команд (задача 063):
+  last target speed + last start/stop, окно `INTENT_WINDOW` 5 с. Резолвит
+  `speed_step:up|down` и `toggle` в момент execute, чтобы быстрые нажатия
+  суммировались. Чистый, время инъекцией. `SPEED_STEP` = 0.1 km/h, clamp
+  `[SPEED_MIN, SPEED_MAX]` (0.50–6.10). `note_speed` на каждом успешном
+  speed-write (CLI / restore / default / Zone Hold); `note_run` только на
+  CLI start/stop/toggle (не auto-pause).
 - `src/led.rs` — Yesoul ambient LED strip (задача 058): `LedState` (`on`/`off`),
   `led_frame` (`F0 10 02` / `F0 10 01`), GATT `0xFFF0`/`0xFFF2`. Не FitShow-кадр
   (нет конверта `02 … xor 03`). Никогда не пишет `0xFF00`/`0xFF01`/`0xFAB*` и
@@ -128,9 +137,12 @@ This file is read by two different agents. Follow the branch that matches who yo
   `current_segment=None`) в presence-переходе при уходе из `Walking` (задача 014);
   на resume после паузы авто-восстанавливает pre-pause скорость ленты через
   `control.rs` (bounded BLE-write, см. `docs/tasks/012`).
-  Единственный владелец BLE-линка: команды управления (`tm speed`/`start`/`stop`)
-  от CLI идут через SQLite-очередь `control_commands` и исполняются здесь на живом
-  подключении (задача 013). CLI напрямую открывает BLE только если демон не держит линк.
+  Единственный владелец BLE-линка: команды управления (`tm speed`/`start`/`stop`/
+  `toggle`/`speed up|down`) от CLI идут через SQLite-очередь `control_commands` и
+  исполняются здесь на живом подключении (задача 013/063). Relative `toggle` и
+  `speed_step:*` резолвятся в `commands.rs` через `BeltIntent` + live speed;
+  CLI напрямую открывает BLE только если демон не держит линк, и **не** для
+  relative-команд (им нужны телеметрия и intent memory).
   Авто-пауза простаивающей ленты (задача 020): если `AwayWhileRunning` длится
   дольше `auto_pause_minutes` (дефолт 5, `0` — выкл.), демон шлёт `Stop` (тот же
   bounded Control-Point round-trip), лента гаснет своим встроенным shutoff'ом;
@@ -139,7 +151,8 @@ This file is read by two different agents. Follow the branch that matches who yo
   retry cooldown; время инъекцией.
 - `src/treadmill_link.rs` — `TreadmillLink` (задача 053): silence clock
   (`silence_deadline` / absolute `sleep_until`), speed history + cruising,
-  pause/resume memory, once-per-session default-speed flag.
+  pause/resume memory, once-per-session default-speed flag, last decoded live
+  speed `Option<CentiKmh>` (задача 063; сбрасывается с сессией).
 - `src/hr_session.rs` — `HrSession` (задача 053/025/033): HR link + contact +
   battery + connect latch; `link_up` paired with shell `hr_notifications`;
   invariant `hr_connected=false ⇒ last_bpm=None`.
@@ -347,6 +360,8 @@ cargo run -- default-speed  # показать расчётную дефолтн
 cargo run -- hr        # диагностика: подключиться к HR-датчику, печатать заряд + live bpm (docs/tasks/025,026)
 cargo run -- zone      # Zone Hold: статус (без аргумента) или on/off/setup/limits/target/list/add/edit/remove/mode (docs/tasks/027)
 cargo run -- speed-widget  # показ живой скорости в виджете: статус (без аргумента) или on/off (docs/tasks/029)
+cargo run -- start / stop / toggle  # лента через очередь демона (toggle = задача 063)
+cargo run -- speed <kmh|up|down>    # абсолютная цель или ±0.1 relative (задача 063)
 cargo run -- led on|off    # ambient LED strip via daemon queue or direct BLE (задача 058)
 cargo run -- led default   # on-connect strip default: status (no arg) or off|on|none (задача 059)
 cargo run -- discover / sniff / fitshow-probe / fitshow-set  # reverse-engineering helpers (FitShow framing in fitshow.rs)

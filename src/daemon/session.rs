@@ -27,6 +27,7 @@ use super::zone_write::execute_zone_write;
 
 use crate::activity::ActivityAccumulator;
 use crate::auto_pause::AutoPause;
+use crate::belt_intent::BeltIntent;
 use crate::config;
 use crate::config_apply::{self, LiveConfig};
 use crate::control_command::ControlCommand;
@@ -105,6 +106,8 @@ pub(super) async fn stream_with_presence(
     // Seeded now so the (possibly slow) subscribe above does not count against
     // the silence arm; pairs with `watchdog.touch_telemetry()` above.
     let mut link = TreadmillLink::new(tokio::time::Instant::now());
+    // Relative CLI intents (задача 063): last target speed + last start/stop.
+    let mut intent = BeltIntent::new();
     // Zone Hold session (задача 027 / 053): phase + timers + override window.
     let mut zone = ZoneSession::new();
     // Backstop poll for queued control commands during quiet stretches; the
@@ -239,6 +242,7 @@ pub(super) async fn stream_with_presence(
                 if let Some(speed) = data.speed {
                     state.last_speed_kmh = Some(f64::from(speed.to_kmh_f32()));
                     state.last_speed_ts = Some(Utc::now().timestamp_millis());
+                    link.note_live_speed(speed);
                 }
 
                 let prev_state = accumulator.state();
@@ -269,8 +273,13 @@ pub(super) async fn stream_with_presence(
                                     // A real captured walking speed → restore it (задача 012).
                                     Some(pre_f32) => {
                                         let pre = CentiKmh::from_kmh_f32(pre_f32);
-                                        let restore =
-                                            try_restore_speed(peripheral, pre, resumed_speed).await;
+                                        let restore = try_restore_speed(
+                                            peripheral,
+                                            pre,
+                                            resumed_speed,
+                                            &mut intent,
+                                        )
+                                        .await;
                                         if let Some(r) = &restore {
                                             zh_effective = CentiKmh::from_kmh_f32(r.to_kmh);
                                         }
@@ -284,6 +293,7 @@ pub(super) async fn stream_with_presence(
                                         store,
                                         resumed_speed,
                                         &mut link,
+                                        &mut intent,
                                     )
                                     .await
                                     {
@@ -312,6 +322,7 @@ pub(super) async fn stream_with_presence(
                                     store,
                                     resumed_speed,
                                     &mut link,
+                                    &mut intent,
                                 )
                                 .await
                             {
@@ -445,7 +456,7 @@ pub(super) async fn stream_with_presence(
                                 zone.persist_snapshot(state, &resolved, zh_bpm, measured);
                             }
                             if let Some(w) = write {
-                                execute_zone_write(peripheral, w).await;
+                                execute_zone_write(peripheral, w, &mut intent).await;
                             }
                         }
                         None => {
@@ -476,12 +487,16 @@ pub(super) async fn stream_with_presence(
                 // connected, so this bounds command latency to ≤1s during an
                 // active session (задача 013). The interval arm below is only a
                 // backstop for quiet stretches.
-                if process_control_commands(peripheral, store).await? {
+                if process_control_commands(peripheral, store, &mut intent, link.live_speed())
+                    .await?
+                {
                     zone.note_cli_speed(Instant::now());
                 }
             }
             _ = command_tick.tick() => {
-                if process_control_commands(peripheral, store).await? {
+                if process_control_commands(peripheral, store, &mut intent, link.live_speed())
+                    .await?
+                {
                     zone.note_cli_speed(Instant::now());
                 }
             }

@@ -1,6 +1,6 @@
 # 063 — Keyboard belt control: `tm toggle` + `tm speed up|down` (UHK + Karabiner)
 
-> **Статус: planned** (2026-09-15).
+> **Статус: done** (2026-09-15). Rust side implemented; Karabiner side is in `macos-keyboard`.
 > **Класс:** feature · **Приоритет:** medium. Builds on [013](013-control-commands-via-daemon-queue.md) (daemon control queue), [039](039-control-source-and-operator-override.md) (control source / Zone Hold override window), [054](054-speed-centi-newtype.md) (`CentiKmh`).
 > **Источник:** operator 2026-09-15 — control the belt from the external UHK keyboard: Cmd+Play/Pause = start/stop toggle, Cmd+Previous/Next = slower/faster. Only these three actions.
 
