@@ -68,6 +68,9 @@ pub struct ToggleOutcome {
 pub struct BeltIntent {
     last_target: Option<(CentiKmh, Instant)>,
     last_run: Option<(RunIntent, Instant)>,
+    /// Last daemon-issued Stop (auto-pause, Zone Hold safety). Blocks speed steps
+    /// like a CLI Stop, but does not flip `toggle` — the operator did not press it.
+    last_safety_stop: Option<Instant>,
 }
 
 impl BeltIntent {
@@ -88,6 +91,12 @@ impl BeltIntent {
         self.last_run = Some((run, now));
     }
 
+    /// Record a daemon-issued Stop (auto-pause, Zone Hold). Call even when the
+    /// write failed or timed out — it may still have reached the belt.
+    pub fn note_safety_stop(&mut self, now: Instant) {
+        self.last_safety_stop = Some(now);
+    }
+
     /// Resolve `speed_step:up|down` against intent memory and live telemetry.
     ///
     /// Base is the last target if written inside [`INTENT_WINDOW`], else live
@@ -101,7 +110,7 @@ impl BeltIntent {
         live: Option<CentiKmh>,
         now: Instant,
     ) -> Result<CentiKmh, StepRefuse> {
-        if self.recent_run(RunIntent::Stop, now) {
+        if self.recent_run(RunIntent::Stop, now) || self.recent_safety_stop(now) {
             return Err(StepRefuse::RecentStop);
         }
         // Live zero wins over a fresh target: the belt may have been stopped
@@ -161,6 +170,11 @@ impl BeltIntent {
             return Some(target);
         }
         live
+    }
+
+    fn recent_safety_stop(&self, now: Instant) -> bool {
+        self.last_safety_stop
+            .is_some_and(|at| now.saturating_duration_since(at) < INTENT_WINDOW)
     }
 
     fn recent_run(&self, want: RunIntent, now: Instant) -> bool {
@@ -271,6 +285,28 @@ mod tests {
         assert_eq!(
             intent.resolve_step(StepDirection::Up, Some(c(320)), t0 + INTENT_WINDOW),
             Ok(c(330))
+        );
+    }
+
+    #[test]
+    fn step_refused_after_safety_stop_but_toggle_unaffected() {
+        let t0 = Instant::now();
+        let mut intent = BeltIntent::new();
+        intent.note_speed(c(320), t0);
+        intent.note_safety_stop(t0);
+        let during = t0 + Duration::from_secs(1);
+        assert_eq!(
+            intent.resolve_step(StepDirection::Up, Some(c(300)), during),
+            Err(StepRefuse::RecentStop)
+        );
+        // Toggle still reads live telemetry: the operator did not issue this Stop.
+        assert_eq!(
+            intent.resolve_toggle(Some(c(300)), during).run,
+            RunIntent::Stop
+        );
+        assert_eq!(
+            intent.resolve_step(StepDirection::Up, Some(c(300)), t0 + INTENT_WINDOW),
+            Ok(c(310))
         );
     }
 

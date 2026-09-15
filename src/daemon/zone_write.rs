@@ -32,6 +32,8 @@ pub(super) async fn execute_zone_write(
                 execute_control_command(peripheral, ControlCommand::Stop, ControlSource::Zone),
             )
             .await;
+            // Safety stop: block relative speed steps while the belt decelerates (задача 063).
+            intent.note_safety_stop(Instant::now());
         }
     }
 }

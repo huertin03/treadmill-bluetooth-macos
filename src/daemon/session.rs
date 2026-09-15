@@ -214,6 +214,12 @@ pub(super) async fn stream_with_presence(
                 link.on_frame_decoded(tokio_now);
                 watchdog.touch_telemetry();
                 logger.log(&data)?;
+                // Safety input for relative commands (задача 063): record the decoded
+                // speed before persistence — a stopped belt seen only in a frame whose
+                // persist is skipped below must not still look moving to `speed up`.
+                if let Some(speed) = data.speed {
+                    link.note_live_speed(speed);
+                }
                 // A failed per-sample persist must not tear down a healthy BLE
                 // link: skip the sample (the cumulative FTMS counters make the
                 // next successful `advance_baseline` recompute the full delta),
@@ -242,7 +248,6 @@ pub(super) async fn stream_with_presence(
                 if let Some(speed) = data.speed {
                     state.last_speed_kmh = Some(f64::from(speed.to_kmh_f32()));
                     state.last_speed_ts = Some(Utc::now().timestamp_millis());
-                    link.note_live_speed(speed);
                 }
 
                 let prev_state = accumulator.state();
@@ -395,7 +400,7 @@ pub(super) async fn stream_with_presence(
                     let now = Instant::now();
                     if auto_pause.due(config.auto_pause, now) {
                         let away_for = auto_pause.away_for(now).unwrap_or_default();
-                        match tokio::time::timeout(
+                        let stop_result = tokio::time::timeout(
                             SPEED_RESTORE_TIMEOUT,
                             execute_control_command(
                                 peripheral,
@@ -403,8 +408,11 @@ pub(super) async fn stream_with_presence(
                                 ControlSource::AutoPause,
                             ),
                         )
-                        .await
-                        {
+                        .await;
+                        // Even a failed/timed-out Stop may have reached the belt: block
+                        // speed steps for the intent window either way (задача 063).
+                        intent.note_safety_stop(Instant::now());
+                        match stop_result {
                             Ok(Ok(())) => {
                                 info!(
                                     away_s = away_for.as_secs(),

@@ -123,7 +123,9 @@ pub(super) async fn process_control_commands(
                 control_source = source.as_str(),
                 "executed queued control command"
             );
-            record_cli_intent(intent, executed, now);
+            // Timestamp after the BLE round-trip: a slow RequestControl must not
+            // leave the recorded intent already outside INTENT_WINDOW.
+            record_cli_intent(intent, executed, Instant::now());
             store.mark_control_command_done(queued.id)?;
             Ok(was_speed)
         }
