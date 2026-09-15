@@ -1,6 +1,6 @@
 # 062 — Alacritty font zoom while walking (`alacritty_zoom`)
 
-**Status:** P2 implemented, live smoke pending (2026-09-15). Line numbers below predate task 063 (landed the same day, touches
+**Status:** ✅ done 2026-09-15 — P1+P2 integrated, live smoke passed (see «Live smoke» results below). Line numbers below predate task 063 (landed the same day, touches
 `session.rs`/`commands`): re-locate by symbol. Operator confirmed: font-only revert and its costs (D3/D4), shrink only on `Paused` or session end, and a manual IPC check (grow/shrink both ways, other overrides survive, manual-zoom guard). Facts and sources:
 research [008](../research/008-alacritty-ipc-font-size.md). Read it first. Everything below is
 derived from it.
@@ -46,6 +46,32 @@ derived from it.
   real Alacritty sockets, database, or Application Support directory.
 - Live smoke, daemon installation, and `ankor-dotfiles` follow-up remain pending
   in the operator's orchestrator session.
+- Orchestrator re-ran the four gates after rebasing onto task 063's fixes: **292 passed**;
+  every commit of the branch compiles on its own.
+
+## Live smoke (2026-09-15, operator present, Alacritty 0.17.0, W2 Pro)
+
+Daemon installed with `scripts/install-daemon.sh`. Timings are from `daemon.log` (UTC).
+
+| Step | Result |
+|---|---|
+| 1. `tm alacritty-zoom` probe | ✅ live pid, `base 14 pt → walking 14.625 pt`; an orphan socket of a just-restarted process was ignored |
+| 2. `preview` / `reset` + foreign override | ✅ `get-config` 14.625 then 14.0 (40 ms CLI); `scrolling.multiplier=4` survived both directions |
+| 3. ⌘= guard | ⏭ not run live (Alacritty behaviour, research 008 fact 1) |
+| 4. `on` with a live session | ✅ hot reload picked it up ≤5 s |
+| 5. `Paused → Walking` | ✅ Apply 40–530 ms after the transition, every cycle |
+| 5. step off, belt running | ✅ `AwayWhileRunning` kept 14.625 |
+| 5. auto-pause (3 min) | ✅ `Paused` → Revert in 48 ms |
+| 5. remote pause | ✅ Revert in 32 ms |
+| 5. `tm stop` | ✅ Revert in 534 ms (IPC retries, no WARN) |
+| 5. power pulled from the socket | ✅ 20 s telemetry silence → session end → Revert 157 ms later, **before** the 10 s hung BLE disconnect |
+| 6. `launchctl kickstart -k` mid-walk | ✅ startup Revert 28 ms after start → reconnect → `Unknown → Walking` → Apply 4 s later |
+| 6a. Alacritty restart mid-walk | ✅ new pid zoomed 1.2 s after process start (opened at 14, then grew); old identity's record pruned; stop → Revert on the new pid, 0 records |
+| 7. `off` mid-walk | ✅ CLI Revert immediately (26 ms); daemon reload then found no records (no-op). `on` mid-walk → daemon Apply 0.5 s after reload |
+| 8. WARN audit | ✅ 0 zoom WARN lines for the whole smoke; no per-tick repeats |
+| 9. launchd context | ✅ covered by the daemon itself (bare `PATH`, no `ALACRITTY_*`) |
+
+`ankor-dotfiles`: `.alacritty.toml` documents the zoom and pins `[general] ipc_socket = true`.
 
 ## Context
 
