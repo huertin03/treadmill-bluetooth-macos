@@ -1,6 +1,6 @@
 use super::*;
-use crate::alacritty_zoom::test_support::{Fake, capture_logs};
 use crate::alacritty_zoom::IPC_MAX_ATTEMPTS;
+use crate::alacritty_zoom::test_support::{Fake, capture_logs};
 const APPLY: ZoomOp = ZoomOp::Apply { delta_pt: 0.625 };
 
 #[tokio::test(start_paused = true)]
@@ -14,7 +14,19 @@ async fn persists_before_setting_and_verifies_both_directions() {
     assert_eq!(fake.size(id), 14.0);
     let state = fake.0.lock().unwrap();
     assert!(state.records.is_empty());
-    assert_eq!(state.log, ["1:get-config -w -1", "1:record", "1:config -w -1 font.size=14.625", "1:get-config -w -1", "1:get-config -w -1", "1:config -w -1 font.size=14", "1:get-config -w -1", "1:delete"]);
+    assert_eq!(
+        state.log,
+        [
+            "1:get-config -w -1",
+            "1:record",
+            "1:config -w -1 font.size=14.625",
+            "1:get-config -w -1",
+            "1:get-config -w -1",
+            "1:config -w -1 font.size=14",
+            "1:get-config -w -1",
+            "1:delete"
+        ]
+    );
 }
 #[tokio::test(start_paused = true)]
 async fn startup_reverts_only_recorded_instances_and_prunes_dead_records() {
@@ -22,12 +34,24 @@ async fn startup_reverts_only_recorded_instances_and_prunes_dead_records() {
     let id = fake.add(1, 10, 14.625);
     fake.add(2, 20, 12.0);
     fake.record(id, 14.0, 14.625);
-    fake.record(Identity { pid: 3, started_at_us: 30 }, 10.0, 11.0);
+    fake.record(
+        Identity {
+            pid: 3,
+            started_at_us: 30,
+        },
+        10.0,
+        11.0,
+    );
     let mut core = ZoomCore::new(fake.clone());
     core.run_op(ZoomOp::Revert).await.unwrap();
     let state = fake.0.lock().unwrap();
     assert!(state.records.is_empty());
-    assert!(!state.log.iter().any(|line| line.starts_with("2:") || line.starts_with("3:config")));
+    assert!(
+        !state
+            .log
+            .iter()
+            .any(|line| line.starts_with("2:") || line.starts_with("3:config"))
+    );
     assert_eq!(state.sizes[&id], 14.0);
 }
 #[tokio::test(start_paused = true)]
@@ -73,7 +97,10 @@ async fn new_delta_and_crash_recovery_keep_the_original_base() {
     let id = fake.add(1, 10, 14.0);
     ZoomCore::new(fake.clone()).run_op(APPLY).await.unwrap();
     let mut restarted = ZoomCore::new(fake.clone());
-    restarted.run_op(ZoomOp::Apply { delta_pt: 1.0 }).await.unwrap();
+    restarted
+        .run_op(ZoomOp::Apply { delta_pt: 1.0 })
+        .await
+        .unwrap();
     assert_eq!(fake.size(id), 15.0);
     assert_eq!(fake.0.lock().unwrap().records[0].base_pt, 14.0);
     restarted.run_op(ZoomOp::Revert).await.unwrap();
@@ -84,7 +111,10 @@ async fn external_change_prevents_revert_and_clears_record() {
     let fake = Fake::default();
     let id = fake.add(1, 10, 16.0);
     fake.record(id, 14.0, 14.625);
-    ZoomCore::new(fake.clone()).run_op(ZoomOp::Revert).await.unwrap();
+    ZoomCore::new(fake.clone())
+        .run_op(ZoomOp::Revert)
+        .await
+        .unwrap();
     assert_eq!(fake.size(id), 16.0);
     assert!(fake.0.lock().unwrap().records.is_empty());
 }
@@ -110,8 +140,18 @@ async fn restart_and_pid_reuse_apply_new_identity_and_revert_only_it() {
 async fn reused_pid_never_reverts_the_previous_process_base() {
     let fake = Fake::default();
     let id = fake.add(1, 20, 14.625);
-    fake.record(Identity { pid: 1, started_at_us: 10 }, 14.0, 14.625);
-    ZoomCore::new(fake.clone()).run_op(ZoomOp::Revert).await.unwrap();
+    fake.record(
+        Identity {
+            pid: 1,
+            started_at_us: 10,
+        },
+        14.0,
+        14.625,
+    );
+    ZoomCore::new(fake.clone())
+        .run_op(ZoomOp::Revert)
+        .await
+        .unwrap();
     assert_eq!(fake.size(id), 14.625);
     assert_eq!(fake.0.lock().unwrap().log, ["1:delete"]);
 }
@@ -152,8 +192,14 @@ async fn lost_delta_change_retains_previous_target_for_reset_after_restart() {
     fake.0.lock().unwrap().drop_sets = IPC_MAX_ATTEMPTS;
     core.run_op(ZoomOp::Apply { delta_pt: 1.0 }).await.unwrap();
     assert_eq!(fake.size(id), 14.625);
-    assert_eq!(fake.0.lock().unwrap().records[0].previous_target_pt, Some(14.625));
-    ZoomCore::new(fake.clone()).run_op(ZoomOp::Revert).await.unwrap();
+    assert_eq!(
+        fake.0.lock().unwrap().records[0].previous_target_pt,
+        Some(14.625)
+    );
+    ZoomCore::new(fake.clone())
+        .run_op(ZoomOp::Revert)
+        .await
+        .unwrap();
     assert_eq!(fake.size(id), 14.0);
 }
 #[tokio::test(start_paused = true)]

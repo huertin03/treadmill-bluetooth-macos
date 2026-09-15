@@ -1,9 +1,18 @@
 use super::*;
-use crate::alacritty_zoom::test_support::Fake;
 use crate::alacritty_zoom::IPC_MAX_ATTEMPTS;
+use crate::alacritty_zoom::test_support::Fake;
 
-fn enabled() -> ZoomConfig { ZoomConfig { enabled: true, delta_pt: 0.625 } }
-async fn settle() { for _ in 0..20 { tokio::task::yield_now().await; } }
+fn enabled() -> ZoomConfig {
+    ZoomConfig {
+        enabled: true,
+        delta_pt: 0.625,
+    }
+}
+async fn settle() {
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+}
 
 #[tokio::test(start_paused = true)]
 async fn startup_reverts_and_base_never_scans_then_flapping_coalesces() {
@@ -49,7 +58,10 @@ async fn late_process_and_restart_are_zoomed_on_one_rescan() {
     tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
     settle().await;
     assert_eq!(fake.size(new), 12.625);
-    handle.set_config(ZoomConfig { delta_pt: 1.0, ..enabled() });
+    handle.set_config(ZoomConfig {
+        delta_pt: 1.0,
+        ..enabled()
+    });
     settle().await;
     assert_eq!(fake.size(new), 13.0);
     handle.set_config(ZoomConfig::default());
@@ -76,7 +88,10 @@ async fn timeout_exhaustion_does_not_stop_worker_or_repeat_on_rescan() {
     tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
     settle().await;
     assert_eq!(fake.0.lock().unwrap().log.len(), calls);
-    handle.set_config(ZoomConfig { delta_pt: 1.0, ..enabled() });
+    handle.set_config(ZoomConfig {
+        delta_pt: 1.0,
+        ..enabled()
+    });
     settle().await;
     assert_eq!(fake.size(id), 15.0);
     drop(handle);

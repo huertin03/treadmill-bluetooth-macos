@@ -1,7 +1,7 @@
 //! Crash recovery records; identity includes process start time to reject PID reuse.
+use super::Store;
 use anyhow::Result;
 use rusqlite::params;
-use super::Store;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ZoomRecord {
@@ -28,13 +28,25 @@ impl Store {
     }
     pub fn zoom_records(&self) -> Result<Vec<ZoomRecord>> {
         let mut stmt = self.conn.prepare("SELECT pid, started_at_us, socket, base_pt, target_pt, previous_target_pt, applied_at_ms FROM alacritty_zoom ORDER BY pid")?;
-        Ok(stmt.query_map([], |row| Ok(ZoomRecord {
-            pid: row.get(0)?, started_at_us: row.get(1)?, socket: row.get(2)?,
-            base_pt: row.get(3)?, target_pt: row.get(4)?, previous_target_pt: row.get(5)?, applied_at_ms: row.get(6)?,
-        }))?.collect::<rusqlite::Result<Vec<_>>>()?)
+        Ok(stmt
+            .query_map([], |row| {
+                Ok(ZoomRecord {
+                    pid: row.get(0)?,
+                    started_at_us: row.get(1)?,
+                    socket: row.get(2)?,
+                    base_pt: row.get(3)?,
+                    target_pt: row.get(4)?,
+                    previous_target_pt: row.get(5)?,
+                    applied_at_ms: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn delete_zoom_record(&self, pid: i32, started_at_us: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM alacritty_zoom WHERE pid=?1 AND started_at_us=?2", params![pid, started_at_us])?;
+        self.conn.execute(
+            "DELETE FROM alacritty_zoom WHERE pid=?1 AND started_at_us=?2",
+            params![pid, started_at_us],
+        )?;
         Ok(())
     }
 }
@@ -44,7 +56,15 @@ mod tests {
     #[test]
     fn persists_replaces_and_deletes_only_matching_identity() {
         let store = Store::open_at(std::path::Path::new(":memory:")).unwrap();
-        let mut record = ZoomRecord { pid: 42, started_at_us: 100, socket: "test.sock".into(), base_pt: 14.0, target_pt: 14.625, previous_target_pt: Some(14.5), applied_at_ms: 200 };
+        let mut record = ZoomRecord {
+            pid: 42,
+            started_at_us: 100,
+            socket: "test.sock".into(),
+            base_pt: 14.0,
+            target_pt: 14.625,
+            previous_target_pt: Some(14.5),
+            applied_at_ms: 200,
+        };
         store.upsert_zoom_record(&record).unwrap();
         assert_eq!(store.zoom_records().unwrap(), vec![record.clone()]);
         record.started_at_us = 101;
