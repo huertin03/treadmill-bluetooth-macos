@@ -1,9 +1,36 @@
 # 062 — Alacritty font zoom while walking (`alacritty_zoom`)
 
-**Status:** 📝 planned 2026-09-15. Line numbers below predate task 063 (landed the same day, touches
+**Status:** P1 implemented 2026-09-15; P2 daemon wiring and live smoke pending. Line numbers below predate task 063 (landed the same day, touches
 `session.rs`/`commands`): re-locate by symbol. Operator confirmed: font-only revert and its costs (D3/D4), shrink only on `Paused` or session end, and a manual IPC check (grow/shrink both ways, other overrides survive, manual-zoom guard). Facts and sources:
 research [008](../research/008-alacritty-ipc-font-size.md). Read it first. Everything below is
 derived from it.
+
+## P1 implementation notes (2026-09-15)
+
+- Core, desired-state worker, SQLite recovery, config loader and CLI are implemented.
+  The worker is deliberately **not wired into the daemon** until P2; `on` persists
+  the setting, while `preview`, `off` and `reset` operate directly now.
+- Recovery refinement to D3/D4: the table also has nullable `previous_target_pt`.
+  During a delta change, persist the previous automated size alongside the new
+  target before writing. Clear it after verified delivery. Until then, either
+  size matches the record for recovery/base selection. Otherwise a crash or five
+  lost sets between replacing the record and applying the new target would lose
+  the original base and make reset skip our previous zoom as an external change.
+- Revert failures retain their record for a later explicit operation or restart;
+  a successful revert or confirmed external change deletes it. IPC checks the
+  full process identity before each call, including queued instances.
+- Fake IPC tests cover retries, restart/PID reuse, interrupted delta changes,
+  coalescing, late processes, failed-pid suppression and log levels. Runner tests
+  use disposable fake executables under `target/`; gate runs redirect `TMPDIR`
+  there as well, isolating existing tests from the host's real temporary directory.
+- Validation: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo build`, `cargo test` passed in that order; **281 tests passed**, including
+  26 Alacritty zoom tests. The intentional schema snapshot includes the new table.
+- P2 integration review must coordinate overlapping CLI/worker operations: SQLite
+  statements are safe individually, but an overlapping reset must not delete an
+  in-flight apply's recovery record. P1 currently assumes sequential CLI operations.
+- Manual live smoke, uninstall changes, daemon wiring and dotfiles remain P2 /
+  orchestrator work. No live Alacritty is invoked by the tests.
 
 ## Context
 

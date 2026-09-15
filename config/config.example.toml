@@ -33,6 +33,13 @@ goals = [8000, 10000, 12000]
 # Toggle with `tm led default off`/`on`/`none`.
 # led_on_connect = "off"
 
+# Enlarge Alacritty fonts while walking (opt-in; daemon wiring in task 062 P2).
+# Delta in pt: finite, 0 < pt <= 8. Calibrate with `tm alacritty-zoom preview`.
+# Manual ⌘=/⌘- zoom blocks automation until ⌘0. Revert changes font.size only;
+# afterwards, changing the file font size requires restarting Alacritty.
+# alacritty_zoom = false
+# alacritty_zoom_pt = 0.625
+
 # Zone Hold (задача 027): closed-loop mode that auto-adjusts belt speed off a
 # worn heart-rate sensor (задача 025) to hold a target heart-rate zone during
 # desk walking. Off by default — turn it on with `tm zone on` (interactive

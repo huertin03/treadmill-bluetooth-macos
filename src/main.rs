@@ -4,6 +4,7 @@
 //! devices) is the default when no subcommand is given.
 
 mod activity;
+mod alacritty_zoom;
 mod auto_pause;
 mod belt_intent;
 mod commands;
@@ -175,6 +176,11 @@ enum Commands {
         #[command(subcommand)]
         action: Option<ZoneAction>,
     },
+    /// Configure, preview, or reset Alacritty font zoom. No BLE.
+    AlacrittyZoom {
+        #[command(subcommand)]
+        action: Option<commands::alacritty_zoom::ZoomAction>,
+    },
     /// Toggle the live belt-speed field in `tm widget` (задача 029): `on`/
     /// `off`, or no sub-action to print the current setting. Not `speed` —
     /// that command already sets the belt's *target* speed via the Control
@@ -317,6 +323,9 @@ async fn main() -> Result<()> {
     if let Commands::Zone { action } = command {
         return run_zone(action);
     }
+    if let Commands::AlacrittyZoom { action } = command {
+        return commands::alacritty_zoom::run_zoom(action).await;
+    }
     if let Commands::SpeedWidget { action } = command {
         return run_speed_widget(action);
     }
@@ -366,6 +375,7 @@ async fn main() -> Result<()> {
         | Commands::NotifyTest
         | Commands::DefaultSpeed
         | Commands::Zone { .. }
+        | Commands::AlacrittyZoom { .. }
         | Commands::SpeedWidget { .. }
         | Commands::Start
         | Commands::Stop

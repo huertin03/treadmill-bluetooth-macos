@@ -20,6 +20,8 @@
 //! resumes delta accounting without double-counting or losing progress.
 
 mod activity;
+mod alacritty_zoom;
+pub use alacritty_zoom::ZoomRecord;
 mod control_queue;
 mod samples;
 mod schema;

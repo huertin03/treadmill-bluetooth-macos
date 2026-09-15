@@ -1,5 +1,6 @@
 //! CLI command handlers, split out of `main.rs` (задача 050).
 
+pub(crate) mod alacritty_zoom;
 pub(crate) mod belt;
 pub(crate) mod common;
 pub(crate) mod diag;
