@@ -1,6 +1,6 @@
 # 063 — Keyboard belt control: `tm toggle` + `tm speed up|down` (UHK + Karabiner)
 
-> **Статус: done** (2026-09-15), pending live verification on the UHK. Rust side implemented; review fixes: live speed 0 refuses a step even with a fresh target (Claude), and the Codex @ high review's three High findings (`adb035d`, see «Review»); Karabiner side in `macos-keyboard` (`a521cf4`) uses Cmd + Play/Pause | Previous | Next via the Goku fork (ankor-dotfiles task 083).
+> **Статус: done** (2026-09-15), live-verified on the UHK (see «Live verification»). Rust side implemented; review fixes: live speed 0 refuses a step even with a fresh target (Claude), and the Codex @ high review's three High findings (`adb035d`, see «Review»); Karabiner side in `macos-keyboard` (`a521cf4`) uses Cmd + Play/Pause | Previous | Next via the Goku fork (ankor-dotfiles task 083).
 > **Класс:** feature · **Приоритет:** medium. Builds on [013](013-control-commands-via-daemon-queue.md) (daemon control queue), [039](039-control-source-and-operator-override.md) (control source / Zone Hold override window), [054](054-speed-centi-newtype.md) (`CentiKmh`).
 > **Источник:** operator 2026-09-15 — control the belt from the external UHK keyboard: Cmd+Play/Pause = start/stop toggle, Cmd+Previous/Next = slower/faster. Only these three actions.
 
@@ -143,6 +143,15 @@ or vendor channels.
 3. On the belt: Cmd+Play → starts; Cmd+Next ×3 quickly → +0.3; Cmd+Prev → −0.1;
    Cmd+Play → stops; Cmd+Play within 5 s of a Start → stops.
 4. MacBook built-in keyboard: Cmd+media keys do nothing treadmill-related.
+
+## Live verification (operator, 2026-09-15)
+
+Passed on the UHK, everything works as intended:
+
+- Cmd+Next / Cmd+Previous — speed steps up / down by 0.1 km/h.
+- Rapid alternating presses (up/down several times quickly) — steps accumulate correctly, no lost or
+  doubled presses.
+- Cmd+Play/Pause — pause (Stop) and play (Start) both work.
 
 ## Review (Codex @ high, 2026-09-15)
 
