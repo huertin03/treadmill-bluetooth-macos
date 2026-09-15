@@ -104,6 +104,11 @@ impl BeltIntent {
         if self.recent_run(RunIntent::Stop, now) {
             return Err(StepRefuse::RecentStop);
         }
+        // Live zero wins over a fresh target: the belt may have been stopped
+        // from the console or by auto-pause right after a speed write.
+        if live == Some(CentiKmh::ZERO) {
+            return Err(StepRefuse::BeltStopped);
+        }
         let Some(base) = self.speed_base(live, now) else {
             return Err(StepRefuse::UnknownBase);
         };
@@ -223,6 +228,21 @@ mod tests {
         let intent = BeltIntent::new();
         assert_eq!(
             intent.resolve_step(StepDirection::Up, Some(CentiKmh::ZERO), t0),
+            Err(StepRefuse::BeltStopped)
+        );
+    }
+
+    #[test]
+    fn step_refused_when_live_zero_despite_fresh_target() {
+        let t0 = Instant::now();
+        let mut intent = BeltIntent::new();
+        intent.note_speed(c(320), t0);
+        assert_eq!(
+            intent.resolve_step(
+                StepDirection::Up,
+                Some(CentiKmh::ZERO),
+                t0 + Duration::from_secs(1)
+            ),
             Err(StepRefuse::BeltStopped)
         );
     }
