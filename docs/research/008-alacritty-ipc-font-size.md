@@ -54,8 +54,8 @@ on the host. Line numbers refer to that tag.
    `--reset -w -1` does `window_config.clear()` on every window plus `global_ipc_options.clear()`,
    so it clears **all** runtime keys, not just `font.size`.
 5. **`get-config -w -1`** returns the file config plus `global_ipc_options` only (`event.rs:320-341`),
-   serialized as the whole `UiConfig`. It **includes current `-w -1` overrides**. Read the base
-   size only after a `--reset`, otherwise base+delta compounds.
+   serialized as the whole `UiConfig`. It **includes current `-w -1` overrides**, so it cannot tell the
+   file base from an active override. A naive "read base, add delta" after a crash compounds.
 6. **Sockets.**
    - The path is `env::temp_dir()/Alacritty-<pid>.sock` on macOS (`polling/mod.rs:47-53`,
      `polling/ipc.rs:152-232`), with no display prefix, and it is removed by `Drop` on clean exit only.
@@ -74,11 +74,11 @@ on the host. Line numbers refer to that tag.
 
 - Mechanism: `alacritty msg -s <socket> config -w -1 …` per live process, spawned with a timeout.
   Do not reimplement the socket protocol.
-- Revert with `--reset -w -1`. That bounds fact 4, tracks later edits of `.alacritty.toml` and
-  leaves zero footprint when idle. It costs any other runtime overrides; nothing in dotfiles uses
-  them as of 2026-09-15.
-- Apply with `--reset`, then `get-config -w -1` (base), then `config -w -1 font.size=base+delta`,
-  then a `get-config` read-back to check (fact 7).
+- Rejected: revert with `--reset -w -1`. It would bound fact 4, but it also clears every other runtime
+  override, and the operator wants the font changed only (2026-09-15). Revert instead writes the
+  recorded base back: `config -w -1 font.size=<base>`. The base comes from a zoom record persisted
+  before applying, because of fact 5. See task 062 D3/D4.
+- Always read back with `get-config` after `config` (fact 7).
 - Find live processes from the socket file names: pid → `proc_pidpath` → basename `alacritty`.
   Never probe by connecting.
 - The operator must stop zooming with ⌘= (fact 1). ⌘0 re-syncs a manually zoomed window.

@@ -29,10 +29,11 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
    Consequence: the operator stops using ⌘= for walking. "Manual wins" is acceptable
    and must be documented in the CLI status hint.
 3. `msg config` **exits 0 even when the option is rejected**, so apply needs a `get-config` read-back.
-4. `-w -1` overrides **accumulate** in Alacritty (unbounded `Vec`). Only `--reset -w -1` clears them
-   (all runtime keys, for existing and future windows).
-5. `get-config -w -1` includes active `-w -1` overrides. Reading the base before resetting would
-   compound base+delta after a crash.
+4. `-w -1` overrides **accumulate** in Alacritty (unbounded `Vec`). Only `--reset -w -1` clears them,
+   and it clears **all** runtime keys, not just the font. The operator rejected that (D3), so a key
+   cannot be un-set, only overwritten with the base value.
+5. `get-config -w -1` includes active `-w -1` overrides, so it cannot tell the file base from our own
+   override. After a crash, a naive "read base, add delta" would compound. D4 records solve this.
 6. Sockets are `$TMPDIR/Alacritty-<pid>.sock`, and there are orphans after crashes (13 on the host). Plain
    `alacritty msg` without `-s` reaches **one arbitrary** process. The daemon's `TMPDIR` under launchd
    equals Alacritty's (verified), and both use Rust `std::env::temp_dir()`.
@@ -55,17 +56,40 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   
   Never connect to a socket to probe it, and never delete orphans (they belong to Alacritty, whose own client
   cleans them). The socket dir is injectable for tests.
-- **D3 — Operations** (each child call: `tokio::process::Command`, `kill_on_drop(true)`,
-  stdin null, stdout/stderr captured, `tokio::time::timeout(IPC_CALL_TIMEOUT = 2s)`):
-  - `Reset`: `msg -s S config -w -1 --reset`.
-  - `Apply{delta}`: `Reset`, then `msg -s S get-config -w -1` → parse `font.size` (base), then
-    `msg -s S config -w -1 font.size=<fmt(base+delta)>`, then `get-config -w -1` read-back.
-    Log `WARN` if the read-back size ≠ target (|diff| > 1e-3). `Reset` first makes Apply idempotent and
-    crash-safe (constraint 5). In the normal case the reset is a visual no-op.
+- **D3 — Operations touch `font.size` only; `--reset` is NEVER sent** (operator decision 2026-09-15:
+  other runtime overrides must survive). Each child call: `tokio::process::Command`,
+  `kill_on_drop(true)`, stdin null, stdout/stderr captured,
+  `tokio::time::timeout(IPC_CALL_TIMEOUT = 2s)`. Sizes compare with tolerance `SIZE_EPSILON = 1e-3`,
+  because Alacritty serialises pt through `f32` (`14.7` reads back as `14.6999998…`).
+  - `Apply{delta}` per instance:
+    1. `msg -s S get-config -w -1` → current size `cur`.
+    2. Find the base. If a zoom record for this pid exists and `cur ≈ record.target`, we already
+       zoomed it: `base = record.base`. Otherwise `base = cur`. Reading the base this way is
+       crash-safe, so constraint 5 does not apply.
+    3. `target = base + delta`.
+    4. **Persist the record `{pid, socket, base, target}` first** (D4).
+    5. `msg -s S config -w -1 font.size=<fmt(target)>`.
+    6. Read back with `get-config`, `WARN` if the result is not ≈ `target`.
+  - `Revert` per **recorded** instance (never an unrecorded one, so windows we did not zoom are
+    never touched):
+    1. `get-config -w -1` → `cur`.
+    2. If `cur ≈ record.target`, send `config -w -1 font.size=<fmt(record.base)>` and read back.
+    3. If not, someone else changed it or the pid was reused: skip at INFO.
+    4. Delete the record either way.
   - Format the size with ≤3 decimals, trailing zeros trimmed (`14.625`, `15`).
-- **D4 — Revert = `--reset -w -1`.** It bounds the accumulation (constraint 4), tracks later edits of
-  `.alacritty.toml`, and leaves zero footprint when idle. Accepted cost: it also clears any other
-  runtime IPC overrides. Nothing uses them (checked `ankor-dotfiles`, 2026-09-15).
+- **D4 — Zoom records in SQLite** (`Store`, new table `alacritty_zoom`:
+  `pid INTEGER PRIMARY KEY, socket TEXT NOT NULL, base_pt REAL NOT NULL, target_pt REAL NOT NULL,
+  applied_at_ms INTEGER NOT NULL`). This is the memory that makes a font-only revert possible after a
+  daemon crash or restart: `get-config` cannot tell the file base from our override (constraint 5).
+  - It is shared safely by the daemon and the `tm` CLI (both already open `Store`).
+  - Rows are deleted on revert, and rows whose pid is no longer a live `alacritty` get pruned on every
+    op. The table is bounded by the number of live Alacritty processes.
+  - Accepted costs, told to the operator:
+    - (a) After the first walk, the running Alacritty process holds a `font.size=<base>` override.
+      Editing `font.size` in `.alacritty.toml` then needs an Alacritty restart to show. Other keys
+      still live-reload.
+    - (b) Each walk cycle appends two entries to Alacritty's in-process override list (research 008
+      fact 4). That is negligible and cleared on Alacritty restart.
 - **D5 — Desired-state worker, not fire-and-forget calls.** One long-lived tokio task spawned in
   `daemon::run_loop::run()` receives a `tokio::sync::watch` of `ZoomWant { config: ZoomConfig,
   walking: bool }` and converges to the **latest** value sequentially:
@@ -76,22 +100,22 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   The handle `AlacrittyZoom` wraps the `watch::Sender` and exposes `set_walking(bool)` and
   `set_config(ZoomConfig)`, both via `send_if_modified`.
 - **D6 — Pure planner** `plan(applied: Applied, want: &ZoomWant) -> Option<ZoomOp>`, where
-  `Applied = Unknown | Base | Zoomed { delta_pt }` and `ZoomOp = Reset | Apply { delta_pt }`.
+  `Applied = Unknown | Base | Zoomed { delta_pt }` and `ZoomOp = Revert | Apply { delta_pt }`.
 
   | applied | want | op |
   |---|---|---|
-  | `Unknown` | disabled | none. **Never touch Alacritty while the feature is off** |
-  | `Unknown` | enabled, not walking | `Reset` (startup reconcile after a crash or restart mid-walk) |
+  | `Unknown` | not (enabled ∧ walking) | `Revert` (startup reconcile; touches recorded pids only, so it is a no-op when nothing was zoomed, even with the feature off) |
   | `Unknown`/`Base` | enabled, walking | `Apply` |
   | `Base` | disabled or not walking | none |
   | `Zoomed{d}` | enabled, walking, same `d` | none |
-  | `Zoomed{d}` | enabled, walking, other `d` | `Apply` (pt changed via hot-reload) |
-  | `Zoomed{_}` | disabled or not walking | `Reset` |
+  | `Zoomed{d}` | enabled, walking, other `d` | `Apply` (pt changed via hot-reload; D3 step 2 keeps the recorded base) |
+  | `Zoomed{_}` | disabled or not walking | `Revert` |
 
-  After an op: `Reset` → `Base`, `Apply` → `Zoomed`. The worker runs the op on **every** discovered
-  instance and tracks `zoomed_pids` and `failed_pids`. Per-instance failure → `WARN`, move on. A failed
-  pid is not retried until the next op (no WARN spam). "No Alacritty running" → DEBUG, and the state
-  still advances. That is what makes the next point work.
+  After an op: `Revert` → `Base`, `Apply` → `Zoomed`.
+  - `Apply` runs on **every** discovered instance; `Revert` runs on every recorded live instance.
+  - The worker tracks `zoomed_pids` and `failed_pids`. Per-instance failure → `WARN`, move on. A failed
+    pid is not retried until the next op (no WARN spam).
+  - "No Alacritty running" → DEBUG, and the state still advances. That is what makes the next point work.
 - **D7 — Late processes.** While `Applied::Zoomed`, a `tokio::time::interval(INSTANCE_RESCAN_INTERVAL
   = 10s)` arm re-discovers instances and runs `Apply` only on pids not in `zoomed_pids ∪ failed_pids`.
   This covers Alacritty (re)launched mid-walk; orphan sockets show it does crash. New windows inside
@@ -102,7 +126,7 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   - `watch::Receiver::changed()` returning `Err` (sender dropped) → INFO, end the task.
 - **D8 — Triggers (daemon wiring, thin).**
   - `run()` (`src/daemon/run_loop.rs:170`, next to `live_config` at :183-194): load the config, spawn the
-    worker with `walking=false`. If enabled, that yields the startup `Reset`.
+    worker with `walking=false`. The first convergence is the startup `Revert` of recorded pids.
   - Presence transition (`src/daemon/session.rs:244-247`, right after
     `state.presence_state = …`, before the `match`): `zoom.set_walking(next_state == PresenceState::Walking)`.
   - Session end (`src/daemon/run_loop.rs:353`, next to `notify::treadmill_lost()`, **before** the
@@ -118,7 +142,7 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
     already allowed there).
   - `src/config_apply.rs` is 970 lines (orange zone): add only the field plumbing and tests there, no logic.
   - **No SIGTERM handler** (non-goal). A crash, watchdog exit or reinstall leaves the zoom until the next
-    daemon start (launchd KeepAlive, ≤10 s) → startup `Reset`. Uninstall calls the CLI reset (D11).
+    daemon start (launchd KeepAlive, ≤10 s) → startup `Revert`. Uninstall calls the CLI `reset` (D11).
 - **D9 — Config (top-level keys, `src/config/alacritty_zoom.rs`, pattern of `src/config/show_speed.rs`).**
   - `alacritty_zoom = true|false`, default `false` (opt-in).
   - `alacritty_zoom_pt = <float>`, default `0.625`, valid `0 < pt ≤ MAX_ZOOM_PT (8.0)` and finite.
@@ -138,12 +162,12 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
     - a live probe `alacritty: running pid 48251 — base 14 pt → walking 14.625 pt`, or
       `alacritty: not running`;
     - the hint line `a window zoomed by hand (⌘=/⌘-) ignores automation until ⌘0`.
-  - `on` / `off`: upsert `alacritty_zoom`. `off` **also runs `Reset` directly** on all live instances, so
+  - `on` / `off`: upsert `alacritty_zoom`. `off` **also runs `Revert` directly** (recorded pids), so
     a stopped daemon cannot leave the terminal zoomed.
   - `pt <value>`: validate like the loader, then upsert `alacritty_zoom_pt`. Invalid → error, non-zero exit.
   - `preview`: `Apply` with the configured pt **now**, regardless of `enabled` (for calibrating the delta).
     Print the target and note that the daemon re-converges on the next presence transition.
-  - `reset`: `Reset` now.
+  - `reset`: `Revert` now (recorded pids only; `font.size` only).
   - The CLI talks to Alacritty directly. There is no single-owner rule here (unlike BLE), so no daemon queue.
 - **D11 — Surroundings.**
   - `tm status` (`src/commands/status.rs`, config block ~:258-266): one read-time line
@@ -170,12 +194,15 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
    `format_font_size(f64) -> String`, constants.
 3. `src/alacritty_zoom/ipc.rs`: `AlacrittyInstance { pid, socket: PathBuf, bin: PathBuf }`;
    `discover_instances(dir: &Path)` (D2); a runner that executes one `msg` call with the D1/D3 rules;
-   `reset(&inst)`, `apply(&inst, delta) -> Result<ApplyReport { base, target }>`. Put a trait over
+   `get_font_size(&inst) -> Result<f64>`, `set_font_size(&inst, pt) -> Result<()>`. Revert/apply orchestration with the D4 records lives in the worker/core, not in the runner. Put a trait over
    discovery + calls (`AlacrittyIpc`, async fn in trait, used generically, not `dyn`) so the worker is
    testable with a fake.
 4. `src/alacritty_zoom/worker.rs`: `AlacrittyZoom` handle + `spawn_worker` + a convergence loop generic
    over the trait (D5–D7). No `unwrap`/`expect` outside tests.
 5. `src/config/alacritty_zoom.rs` loader (D9), `config/config.example.toml`.
+5a. `Store` table `alacritty_zoom` (D4): `CREATE TABLE IF NOT EXISTS` in the existing schema setup under
+   `src/store/`, plus `upsert_zoom_record` / `zoom_records` / `delete_zoom_record`, with in-memory `Store`
+   tests. The worker gets the records through the same trait seam, so its tests do not need SQLite.
 6. CLI `tm alacritty-zoom` (D10), `tm status` line (D11).
 7. Keep each new file ≤ ~300 lines; split if it grows.
 
@@ -199,15 +226,18 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
 - Loader: absent / valid / invalid bool / non-number / `0` / negative / `> 8` / NaN.
 - `config_apply` (P2): `diff` detects the field; `apply_config` emits `AlacrittyZoomChanged`.
 - Worker with a fake `AlacrittyIpc` (`#[tokio::test(start_paused = true)]`):
-  - startup `Reset` when enabled, nothing when disabled;
-  - walking → per instance `reset → get-config → set → read-back`;
+  - startup `Revert` touches only recorded pids and never sends anything for unrecorded ones;
+  - walking → per instance `get-config → record → set → read-back`, and leaving walking → `get-config → set base → read-back → delete record`;
+  - re-apply with a new delta while zoomed keeps the recorded base (no compounding);
+  - `Revert` skips (and deletes the record) when the current size is not ≈ the recorded target;
+  - the runner is **never** called with `--reset` (assert on the fake's argv log);
   - walking/not-walking flapping coalesces to the final state;
   - rescan while zoomed applies only to a new pid, and nothing is rescanned while `Base`;
   - a failing pid is not retried until the next op;
   - a timing-out call → WARN, the worker keeps running.
 - `ipc.rs` runner against a **fake `alacritty` shell script** in a temp dir (never the real Alacritty,
   never the real `$TMPDIR` sockets):
-  - it records argv, prints JSON for `get-config`, and asserts `-s`, `-w -1` and `--reset` placement;
+  - it records argv, prints JSON for `get-config`, and asserts `-s <socket>` and `-w -1` placement and that `--reset` never appears;
   - `ALACRITTY_SOCKET`/`ALACRITTY_WINDOW_ID` are absent in the child even if set in the parent;
   - a sleeping variant gets killed by the timeout.
 - `discover_instances` on a temp dir with the socket names (use the test's own pid for a "live"
@@ -231,7 +261,8 @@ it or touch the real `$TMPDIR`.
 0. Operator presses **⌘0** in every Alacritty window (clears the manual zoom, constraint 2).
 1. `tm alacritty-zoom` → shows the live pid, `base 14 pt → walking 14.625 pt`.
 2. `tm alacritty-zoom preview` → font grows like 2×⌘=; `alacritty msg -s <sock> get-config -w -1`
-   shows `14.625`. `tm alacritty-zoom reset` → back, `14.0`.
+   shows `14.625`. `tm alacritty-zoom reset` → back, `14.0`. A runtime override set beforehand
+   (e.g. `window.opacity=0.9`) survives both directions.
 3. Guard check: ⌘= once → `preview` → no visible change (expected) → `reset` → ⌘0.
 4. `scripts/install-daemon.sh` (mandatory after any rebuild, or toasts silently stop), then `tm alacritty-zoom on`.
 5. Walk → grows within ~2 s of `presence transition next_state=Walking` in
@@ -258,7 +289,8 @@ it or touch the real `$TMPDIR`.
 - **Flapping reflow:** every walk↔away transition resizes the grid (herdr/Claude Code redraw). The away
   threshold (10 s) is the only debounce. If this is annoying in practice, follow up with a revert delay key.
 - **Manual zoom wins** (constraint 2), and `tm` cannot detect it (not observable through IPC).
-- **`--reset` clears other runtime overrides** (D4).
+- **A `font.size` pin stays in the running Alacritty process** after the first walk (D4 a). Editing the font size
+  in `.alacritty.toml` needs an Alacritty restart to show. That is the price of not using `--reset`.
 - **Alacritty upgraded in place while running:** the client binary is newer than the process, so the wire
   format could differ. The read-back WARN catches a silent failure.
 - **Mac sleeps mid-walk:** the zoom stays until wake → link loss → revert.
