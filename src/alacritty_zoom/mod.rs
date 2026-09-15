@@ -112,35 +112,27 @@ mod tests {
     use super::*;
     #[test]
     fn plans_every_desired_state() {
-        for applied in [
-            Applied::Unknown,
-            Applied::Base,
-            Applied::Zoomed { delta_pt: 0.625 },
-            Applied::Zoomed { delta_pt: 1.0 },
-        ] {
-            for enabled in [false, true] {
-                for active in [false, true] {
-                    let want = ZoomWant {
-                        config: ZoomConfig {
-                            enabled,
-                            delta_pt: 0.625,
-                        },
-                        active,
-                    };
-                    let expected = if enabled && active {
-                        if applied == (Applied::Zoomed { delta_pt: 0.625 }) {
-                            None
-                        } else {
-                            Some(ZoomOp::Apply { delta_pt: 0.625 })
-                        }
-                    } else if applied == Applied::Base {
-                        None
-                    } else {
-                        Some(ZoomOp::Revert)
-                    };
-                    assert_eq!(plan(applied, &want), expected);
-                }
-            }
+        let rows = [
+            (Applied::Unknown, false, false, Some(ZoomOp::Revert)),
+            (Applied::Unknown, false, true, Some(ZoomOp::Revert)),
+            (Applied::Unknown, true, false, Some(ZoomOp::Revert)),
+            (Applied::Unknown, true, true, Some(ZoomOp::Apply { delta_pt: 0.625 })),
+            (Applied::Base, false, false, None),
+            (Applied::Base, false, true, None),
+            (Applied::Base, true, false, None),
+            (Applied::Base, true, true, Some(ZoomOp::Apply { delta_pt: 0.625 })),
+            (Applied::Zoomed { delta_pt: 0.625 }, false, false, Some(ZoomOp::Revert)),
+            (Applied::Zoomed { delta_pt: 0.625 }, false, true, Some(ZoomOp::Revert)),
+            (Applied::Zoomed { delta_pt: 0.625 }, true, false, Some(ZoomOp::Revert)),
+            (Applied::Zoomed { delta_pt: 0.625 }, true, true, None),
+            (Applied::Zoomed { delta_pt: 1.0 }, false, false, Some(ZoomOp::Revert)),
+            (Applied::Zoomed { delta_pt: 1.0 }, false, true, Some(ZoomOp::Revert)),
+            (Applied::Zoomed { delta_pt: 1.0 }, true, false, Some(ZoomOp::Revert)),
+            (Applied::Zoomed { delta_pt: 1.0 }, true, true, Some(ZoomOp::Apply { delta_pt: 0.625 })),
+        ];
+        for (applied, enabled, active, expected) in rows {
+            let want = ZoomWant { config: ZoomConfig { enabled, delta_pt: 0.625 }, active };
+            assert_eq!(plan(applied, &want), expected, "{applied:?}, {want:?}");
         }
     }
     #[test]

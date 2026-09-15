@@ -184,7 +184,6 @@ pub(crate) fn age_secs_rfc3339(rfc3339: &str, now_ms: i64) -> Option<i64> {
 /// SQLite (`daemon_status` + `activity_segments`) and `launchctl` — never
 /// touches the BLE adapter, so it cannot contend with a running daemon for it.
 pub(crate) fn run_status() -> Result<()> {
-    super::alacritty_zoom::print_setting(config::load_alacritty_zoom());
     let store = store::Store::open()?;
     let status = store.daemon_status()?;
     let daemon_alive = daemon_process_alive();
@@ -297,6 +296,7 @@ pub(crate) fn run_status() -> Result<()> {
                     "config (in daemon): goals {goals_desc} · auto-pause {auto_pause} · read {}",
                     describe_timestamp(loaded_at)
                 );
+                super::alacritty_zoom::print_setting(config::load_alacritty_zoom());
                 // The workout-gap is read-time (задача 014) — the CLI resolves it
                 // itself, the daemon does not hold it; shown here for completeness.
                 println!(

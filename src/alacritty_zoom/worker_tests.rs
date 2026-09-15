@@ -121,3 +121,70 @@ async fn changes_during_ipc_converge_to_latest_state_after_the_op() {
     drop(handle);
     task.await.unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn failed_revert_retries_without_warn_spam_and_recovers() {
+    let (logs, _guard) = crate::alacritty_zoom::test_support::capture_logs();
+    let fake = Fake::default();
+    let id = fake.add(1, 10, 14.625);
+    fake.record(id, 14.0, 14.625);
+    fake.0.lock().unwrap().fail_discovery = true;
+    let (handle, task) = spawn_worker(fake.clone(), enabled());
+    settle().await;
+    assert_eq!(fake.0.lock().unwrap().scans, 1);
+    for _ in 0..5 {
+        tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+        settle().await;
+    }
+    assert_eq!(fake.0.lock().unwrap().scans, 6);
+    assert_eq!(logs.count("WARN"), 1);
+    assert_eq!(fake.size(id), 14.625);
+    fake.0.lock().unwrap().fail_discovery = false;
+    tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+    settle().await;
+    assert_eq!(fake.size(id), 14.0);
+    assert_eq!(logs.count("reconciliation recovered"), 1);
+    drop(handle);
+    task.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn newer_want_wins_during_failure_streak() {
+    let fake = Fake::default();
+    let id = fake.add(1, 10, 14.625);
+    fake.record(id, 14.0, 14.625);
+    fake.0.lock().unwrap().fail_discovery = true;
+    let (handle, task) = spawn_worker(fake.clone(), enabled());
+    settle().await;
+    handle.set_active(true);
+    handle.set_config(ZoomConfig { delta_pt: 1.0, ..enabled() });
+    settle().await;
+    fake.0.lock().unwrap().fail_discovery = false;
+    tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+    settle().await;
+    assert_eq!(fake.size(id), 15.0);
+    drop(handle);
+    task.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn persistent_rescan_error_warns_once() {
+    let (logs, _guard) = crate::alacritty_zoom::test_support::capture_logs();
+    let fake = Fake::default();
+    let (handle, task) = spawn_worker(fake.clone(), enabled());
+    settle().await;
+    handle.set_active(true);
+    settle().await;
+    fake.0.lock().unwrap().fail_discovery = true;
+    for _ in 0..5 {
+        tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+        settle().await;
+    }
+    assert_eq!(logs.count("WARN"), 1);
+    fake.0.lock().unwrap().fail_discovery = false;
+    tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+    settle().await;
+    assert_eq!(logs.count("rescan recovered"), 1);
+    drop(handle);
+    task.await.unwrap();
+}

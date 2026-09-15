@@ -101,10 +101,11 @@ async fn print_probe(core: &mut ZoomCore<SystemIpc>, config: ZoomConfig) -> Resu
                 });
                 let base = record.map_or(current, |record| record.base_pt);
                 println!(
-                    "alacritty: running pid {} — base {} pt → walking {} pt",
+                    "alacritty: running pid {} — base {} pt → walking {} pt (+{} pt)",
                     instance.identity.pid,
                     format_font_size(base),
-                    highlight_config(format_font_size(base + config.delta_pt))
+                    format_font_size(base + config.delta_pt),
+                    highlight_config(format_font_size(config.delta_pt))
                 );
             }
             Err(error) => {

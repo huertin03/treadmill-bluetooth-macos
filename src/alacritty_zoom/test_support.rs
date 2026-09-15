@@ -17,6 +17,7 @@ pub struct State {
     pub timeout_calls: usize,
     pub vanish_on_set: bool,
     pub scans: usize,
+    pub fail_discovery: bool,
     pub call_delay: Option<std::time::Duration>,
 }
 #[derive(Clone, Default)]
@@ -62,6 +63,7 @@ impl AlacrittyIpc for Fake {
     fn discover_instances(&mut self) -> Result<Vec<AlacrittyInstance>> {
         let mut state = self.0.lock().unwrap();
         state.scans += 1;
+        if state.fail_discovery { bail!("injected discovery failure"); }
         Ok(state.instances.clone())
     }
     fn is_live(&mut self, instance: &AlacrittyInstance) -> bool {

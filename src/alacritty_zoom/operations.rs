@@ -177,7 +177,7 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
             );
         }
         self.ipc.delete_zoom_record(instance.identity)?;
-        Ok(changed.then_some((record.target_pt, record.base_pt)))
+        Ok(changed.then_some((record.base_pt, record.target_pt)))
     }
 }
 pub fn matches_record(current: f64, record: &ZoomRecord) -> bool {

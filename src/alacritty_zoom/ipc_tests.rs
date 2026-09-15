@@ -20,7 +20,7 @@ impl TestDir {
         let bin = self.0.join("alacritty");
         std::fs::write(
             &bin,
-            format!("#!/opt/homebrew/bin/bash\nset -eu\n{script}\n"),
+            format!("#!/bin/bash\nset -eu\n{script}\n"),
         )
         .unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
