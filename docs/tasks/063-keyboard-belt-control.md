@@ -155,7 +155,7 @@ findings, all fixed in `adb035d` (fmt + clippy `-D warnings` + 282 tests green; 
    `continue`, so a stopped belt seen only in an unpersisted frame still looked moving. Fix: record the
    decoded speed right after decode, before persistence.
 
-Residual (documented, not fixed): a Stop from the **console button** is only visible through decaying
-telemetry — during deceleration live speed is still > 0, so a speed key there may send a target. The
-daemon does not subscribe to Fitness Machine Status `0x2ADA` (which would report "Stopped by user");
-revisit if the firmware turns out to accept speed targets while stopping.
+4. **Console-button Stop** (found while documenting the review): during deceleration live speed is still
+   > 0, so a speed key could send a target. The daemon already subscribes to Fitness Machine Status
+   `0x2ADA` and persists it (`status_events`: 137× `0x02 StoppedOrPausedByUser` on the W2 Pro), but only
+   logged it. Fix `c3b2645`: `ftms::is_stop_event` (`0x02`, `0x03` safety key) → `note_safety_stop`.
