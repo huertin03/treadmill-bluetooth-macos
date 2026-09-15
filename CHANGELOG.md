@@ -6,6 +6,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `alacritty_zoom` / `tm alacritty-zoom [on|off|pt <value>|preview|reset]` —
+  grow the Alacritty font by `alacritty_zoom_pt` (default +0.625 pt) while
+  walking and write the base size back when the belt stops or the treadmill
+  session ends (задача 062). Font size only, verified by read-back with retries
+  (Alacritty 0.17 IPC is lossy on macOS); recovery records in SQLite survive
+  daemon and Alacritty restarts. A window zoomed by hand (⌘=/⌘-) ignores it
+  until ⌘0.
+
 ## [0.4.0] — 2026-08-28
 
 ### Added

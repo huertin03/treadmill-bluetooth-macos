@@ -14,6 +14,8 @@ Documentation-first workspace for `treadmill-bluetooth-macos`.
     off by default on connect (**done**, live-verified); [060](tasks/060-hygiene-broken-pipe-goals-split.md)
     hygiene: SIGPIPE panic on piped output + `goals.rs` split (**done**);
     [061](tasks/061-led-off-prime-after-power-cycle.md) LED `off` no-op after
-    power-cycle → prime with `on` (**done**, pending live).
+    power-cycle → prime with `on` (**done**, pending live);
+    [062](tasks/062-alacritty-zoom-while-walking.md) Alacritty font zoom while walking,
+    `tm alacritty-zoom` (**done**, live-verified; facts: [research 008](research/008-alacritty-ipc-font-size.md)).
 - `backlog/` — not-yet-scheduled work. `004`–`011` done (see each file).
 - `ideas/` — loose ideas / future directions.
