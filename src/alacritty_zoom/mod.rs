@@ -112,22 +112,73 @@ mod tests {
             (Applied::Unknown, false, false, Some(ZoomOp::Revert)),
             (Applied::Unknown, false, true, Some(ZoomOp::Revert)),
             (Applied::Unknown, true, false, Some(ZoomOp::Revert)),
-            (Applied::Unknown, true, true, Some(ZoomOp::Apply { delta_pt: 0.625 })),
+            (
+                Applied::Unknown,
+                true,
+                true,
+                Some(ZoomOp::Apply { delta_pt: 0.625 }),
+            ),
             (Applied::Base, false, false, None),
             (Applied::Base, false, true, None),
             (Applied::Base, true, false, None),
-            (Applied::Base, true, true, Some(ZoomOp::Apply { delta_pt: 0.625 })),
-            (Applied::Zoomed { delta_pt: 0.625 }, false, false, Some(ZoomOp::Revert)),
-            (Applied::Zoomed { delta_pt: 0.625 }, false, true, Some(ZoomOp::Revert)),
-            (Applied::Zoomed { delta_pt: 0.625 }, true, false, Some(ZoomOp::Revert)),
+            (
+                Applied::Base,
+                true,
+                true,
+                Some(ZoomOp::Apply { delta_pt: 0.625 }),
+            ),
+            (
+                Applied::Zoomed { delta_pt: 0.625 },
+                false,
+                false,
+                Some(ZoomOp::Revert),
+            ),
+            (
+                Applied::Zoomed { delta_pt: 0.625 },
+                false,
+                true,
+                Some(ZoomOp::Revert),
+            ),
+            (
+                Applied::Zoomed { delta_pt: 0.625 },
+                true,
+                false,
+                Some(ZoomOp::Revert),
+            ),
             (Applied::Zoomed { delta_pt: 0.625 }, true, true, None),
-            (Applied::Zoomed { delta_pt: 1.0 }, false, false, Some(ZoomOp::Revert)),
-            (Applied::Zoomed { delta_pt: 1.0 }, false, true, Some(ZoomOp::Revert)),
-            (Applied::Zoomed { delta_pt: 1.0 }, true, false, Some(ZoomOp::Revert)),
-            (Applied::Zoomed { delta_pt: 1.0 }, true, true, Some(ZoomOp::Apply { delta_pt: 0.625 })),
+            (
+                Applied::Zoomed { delta_pt: 1.0 },
+                false,
+                false,
+                Some(ZoomOp::Revert),
+            ),
+            (
+                Applied::Zoomed { delta_pt: 1.0 },
+                false,
+                true,
+                Some(ZoomOp::Revert),
+            ),
+            (
+                Applied::Zoomed { delta_pt: 1.0 },
+                true,
+                false,
+                Some(ZoomOp::Revert),
+            ),
+            (
+                Applied::Zoomed { delta_pt: 1.0 },
+                true,
+                true,
+                Some(ZoomOp::Apply { delta_pt: 0.625 }),
+            ),
         ];
         for (applied, enabled, active, expected) in rows {
-            let want = ZoomWant { config: ZoomConfig { enabled, delta_pt: 0.625 }, active };
+            let want = ZoomWant {
+                config: ZoomConfig {
+                    enabled,
+                    delta_pt: 0.625,
+                },
+                active,
+            };
             assert_eq!(plan(applied, &want), expected, "{applied:?}, {want:?}");
         }
     }

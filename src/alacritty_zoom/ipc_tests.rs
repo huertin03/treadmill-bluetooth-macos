@@ -18,11 +18,7 @@ impl TestDir {
     }
     fn create_instance(&self, script: &str) -> AlacrittyInstance {
         let bin = self.0.join("alacritty");
-        std::fs::write(
-            &bin,
-            format!("#!/bin/bash\nset -eu\n{script}\n"),
-        )
-        .unwrap();
+        std::fs::write(&bin, format!("#!/bin/bash\nset -eu\n{script}\n")).unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
         AlacrittyInstance {
             identity: Identity {

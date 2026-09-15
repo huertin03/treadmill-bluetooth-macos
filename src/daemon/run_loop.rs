@@ -12,7 +12,10 @@ use tracing::{error, info, warn};
 use super::session::stream_with_presence;
 use super::state::{DaemonState, persist_daemon_status};
 use super::watchdog::Watchdog;
-use crate::alacritty_zoom::{ipc::SystemIpc, worker::{AlacrittyZoom, spawn_worker}};
+use crate::alacritty_zoom::{
+    ipc::SystemIpc,
+    worker::{AlacrittyZoom, spawn_worker},
+};
 use crate::config;
 use crate::config_apply::LiveConfig;
 use crate::goals;

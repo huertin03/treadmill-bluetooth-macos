@@ -3,8 +3,8 @@ use super::ipc::AlacrittyIpc;
 use super::operations::ZoomCore;
 use super::{Applied, INSTANCE_RESCAN_INTERVAL, ZoomConfig, ZoomOp, ZoomWant, plan};
 use tokio::sync::watch;
-use tracing::instrument::WithSubscriber;
 use tokio::task::JoinHandle;
+use tracing::instrument::WithSubscriber;
 
 #[derive(Clone)]
 pub struct AlacrittyZoom {
@@ -13,7 +13,10 @@ pub struct AlacrittyZoom {
 impl AlacrittyZoom {
     /// Inert handle when optional zoom initialization fails; no task is spawned.
     pub fn disabled() -> Self {
-        let (sender, _) = watch::channel(ZoomWant { config: ZoomConfig::default(), active: false });
+        let (sender, _) = watch::channel(ZoomWant {
+            config: ZoomConfig::default(),
+            active: false,
+        });
         Self { sender }
     }
 
@@ -64,13 +67,17 @@ async fn run_worker<I: AlacrittyIpc>(
         let want = *receiver.borrow_and_update();
         // A failed op may have partially changed instances. Even if a newer want
         // matches the last completed state, reconcile it once to repair those writes.
-        let op = plan(applied, &want).or_else(|| retry_pending.then(|| {
-            if want.config.enabled && want.active {
-                ZoomOp::Apply { delta_pt: want.config.delta_pt }
-            } else {
-                ZoomOp::Revert
-            }
-        }));
+        let op = plan(applied, &want).or_else(|| {
+            retry_pending.then(|| {
+                if want.config.enabled && want.active {
+                    ZoomOp::Apply {
+                        delta_pt: want.config.delta_pt,
+                    }
+                } else {
+                    ZoomOp::Revert
+                }
+            })
+        });
         if let Some(op) = op {
             match core.run_op(op).await {
                 Ok(()) => {

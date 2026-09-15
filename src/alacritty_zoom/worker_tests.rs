@@ -157,7 +157,10 @@ async fn newer_want_wins_during_failure_streak() {
     let (handle, task) = spawn_worker(fake.clone(), enabled());
     settle().await;
     handle.set_active(true);
-    handle.set_config(ZoomConfig { delta_pt: 1.0, ..enabled() });
+    handle.set_config(ZoomConfig {
+        delta_pt: 1.0,
+        ..enabled()
+    });
     settle().await;
     fake.0.lock().unwrap().fail_discovery = false;
     tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;

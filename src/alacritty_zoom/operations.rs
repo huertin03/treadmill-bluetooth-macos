@@ -1,6 +1,6 @@
 //! Persist-before-write operations shared by the CLI and desired-state worker.
-use super::lock::ZoomLock;
 use super::ipc::{AlacrittyInstance, AlacrittyIpc, Identity};
+use super::lock::ZoomLock;
 use super::retry::{get_font_size, set_font_size};
 use super::{ZoomOp, is_valid_delta, sizes_match};
 use crate::store::ZoomRecord;
@@ -112,7 +112,9 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
         }
         if !self.ipc.is_live(instance) {
             tracing::debug!(identity = ?instance.identity, %error, "Alacritty instance exited mid-op");
-            self.ipc.delete_zoom_record(instance.identity).context(RecordFailure)?;
+            self.ipc
+                .delete_zoom_record(instance.identity)
+                .context(RecordFailure)?;
             return Ok(());
         }
         tracing::warn!(identity = ?instance.identity, %error, "Alacritty zoom operation failed");
@@ -127,7 +129,8 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
     ) -> Result<Option<(f64, f64)>> {
         let record = self
             .ipc
-            .zoom_records().context(RecordFailure)?
+            .zoom_records()
+            .context(RecordFailure)?
             .into_iter()
             .find(|record| record_identity(record) == instance.identity);
         match op {
@@ -173,10 +176,14 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
                 .map(|_| current),
             applied_at_ms: chrono::Utc::now().timestamp_millis(),
         };
-        self.ipc.upsert_zoom_record(&pending).context(RecordFailure)?;
+        self.ipc
+            .upsert_zoom_record(&pending)
+            .context(RecordFailure)?;
         set_font_size(&mut self.ipc, instance, target).await?;
         if pending.previous_target_pt.take().is_some() {
-            self.ipc.upsert_zoom_record(&pending).context(RecordFailure)?;
+            self.ipc
+                .upsert_zoom_record(&pending)
+                .context(RecordFailure)?;
         }
         Ok((base, target))
     }
@@ -198,7 +205,9 @@ impl<I: AlacrittyIpc> ZoomCore<I> {
                 "Alacritty font changed externally; skipping revert"
             );
         }
-        self.ipc.delete_zoom_record(instance.identity).context(RecordFailure)?;
+        self.ipc
+            .delete_zoom_record(instance.identity)
+            .context(RecordFailure)?;
         Ok(changed.then_some((record.base_pt, record.target_pt)))
     }
 }

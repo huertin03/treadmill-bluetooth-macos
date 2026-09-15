@@ -69,7 +69,9 @@ impl AlacrittyIpc for Fake {
     fn discover_instances(&mut self) -> Result<Vec<AlacrittyInstance>> {
         let mut state = self.0.lock().unwrap();
         state.scans += 1;
-        if state.fail_discovery { bail!("injected discovery failure"); }
+        if state.fail_discovery {
+            bail!("injected discovery failure");
+        }
         Ok(state.instances.clone())
     }
     fn is_live(&mut self, instance: &AlacrittyInstance) -> bool {
@@ -147,7 +149,9 @@ impl AlacrittyIpc for Fake {
     }
     fn upsert_zoom_record(&mut self, record: &ZoomRecord) -> Result<()> {
         let mut state = self.0.lock().unwrap();
-        if state.fail_record_write { bail!("injected SQLite busy on upsert"); }
+        if state.fail_record_write {
+            bail!("injected SQLite busy on upsert");
+        }
         state.log.push(format!("{}:record", record.pid));
         state.records.retain(|item| item.pid != record.pid);
         state.records.push(record.clone());
@@ -155,7 +159,9 @@ impl AlacrittyIpc for Fake {
     }
     fn delete_zoom_record(&mut self, identity: Identity) -> Result<()> {
         let mut state = self.0.lock().unwrap();
-        if state.fail_record_delete { bail!("injected SQLite busy on delete"); }
+        if state.fail_record_delete {
+            bail!("injected SQLite busy on delete");
+        }
         state.log.push(format!("{}:delete", identity.pid));
         state.records.retain(|record| {
             record.pid != identity.pid || record.started_at_us != identity.started_at_us
@@ -216,14 +222,22 @@ impl TestLockDir {
     pub fn create() -> Self {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join(format!(
-            "zoom-lock-{}-{}", std::process::id(), NEXT_DIR.fetch_add(1, Ordering::Relaxed)
-        ));
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!(
+                "zoom-lock-{}-{}",
+                std::process::id(),
+                NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+            ));
         std::fs::create_dir_all(&dir).unwrap();
         Self(dir)
     }
-    pub fn path(&self) -> std::path::PathBuf { self.0.join("alacritty_zoom.lock") }
+    pub fn path(&self) -> std::path::PathBuf {
+        self.0.join("alacritty_zoom.lock")
+    }
 }
 impl Drop for TestLockDir {
-    fn drop(&mut self) { std::fs::remove_dir_all(&self.0).unwrap(); }
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).unwrap();
+    }
 }

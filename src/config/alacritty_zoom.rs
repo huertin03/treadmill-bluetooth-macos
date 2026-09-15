@@ -59,8 +59,14 @@ mod tests {
             8.0
         );
         assert_eq!(
-            parse_config(&toml::from_str::<toml::Value>("alacritty_zoom = 'yes'\nalacritty_zoom_pt = 1.25").unwrap()),
-            ZoomConfig { enabled: false, delta_pt: 1.25 }
+            parse_config(
+                &toml::from_str::<toml::Value>("alacritty_zoom = 'yes'\nalacritty_zoom_pt = 1.25")
+                    .unwrap()
+            ),
+            ZoomConfig {
+                enabled: false,
+                delta_pt: 1.25
+            }
         );
         for invalid in ["\"yes\"", "0", "-1", "8.01", "nan", "inf", "true"] {
             let value = toml::from_str::<toml::Value>(&format!(

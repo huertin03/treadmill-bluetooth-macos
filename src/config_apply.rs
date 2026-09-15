@@ -8,8 +8,8 @@
 
 use std::time::{Duration, SystemTime};
 
-use crate::config;
 use crate::alacritty_zoom::ZoomConfig;
+use crate::config;
 use crate::goals::{self, Goal};
 use crate::led::LedState;
 use crate::zone_hold::{self, ZoneHoldConfig};
@@ -996,9 +996,18 @@ mod tests {
         let mut config = live(zh_enabled());
         assert!(diff(&config, &config).is_empty());
         for new_zoom in [
-            ZoomConfig { enabled: true, delta_pt: 0.625 },
-            ZoomConfig { enabled: true, delta_pt: 1.25 },
-            ZoomConfig { enabled: false, delta_pt: 1.25 },
+            ZoomConfig {
+                enabled: true,
+                delta_pt: 0.625,
+            },
+            ZoomConfig {
+                enabled: true,
+                delta_pt: 1.25,
+            },
+            ZoomConfig {
+                enabled: false,
+                delta_pt: 1.25,
+            },
         ] {
             let mut new = config.clone();
             new.alacritty_zoom = new_zoom;
@@ -1011,5 +1020,4 @@ mod tests {
             assert!(diff(&config, &new).is_empty());
         }
     }
-
 }

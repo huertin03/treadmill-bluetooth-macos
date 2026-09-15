@@ -47,7 +47,11 @@ impl ZoomLock {
                 waiting = true;
             }
             if tokio::time::Instant::now() >= deadline {
-                bail!("Alacritty zoom lock timeout after {}s: {}", ZOOM_LOCK_WAIT.as_secs(), path.display());
+                bail!(
+                    "Alacritty zoom lock timeout after {}s: {}",
+                    ZOOM_LOCK_WAIT.as_secs(),
+                    path.display()
+                );
             }
             tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
         }

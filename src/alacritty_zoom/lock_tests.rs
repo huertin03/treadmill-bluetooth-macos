@@ -2,8 +2,8 @@ use super::*;
 use crate::alacritty_zoom::ZoomOp;
 use crate::alacritty_zoom::operations::ZoomCore;
 use crate::alacritty_zoom::test_support::Fake;
-use std::os::unix::fs::PermissionsExt;
 use crate::alacritty_zoom::test_support::TestLockDir;
+use std::os::unix::fs::PermissionsExt;
 
 #[tokio::test(start_paused = true)]
 async fn waits_for_guard_drop_and_keeps_private_lock_file() {
@@ -11,7 +11,10 @@ async fn waits_for_guard_drop_and_keeps_private_lock_file() {
     let path = dir.path();
     let first = ZoomLock::acquire(&path).await.unwrap();
     assert!(ZoomLock::try_acquire(&path).unwrap().is_none());
-    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     let second_path = path.clone();
     let second = tokio::spawn(async move { ZoomLock::acquire(&second_path).await });
     tokio::task::yield_now().await;
@@ -48,7 +51,8 @@ async fn reset_waits_for_inflight_apply_then_rereads_and_reverts() {
         state.call_delay = Some(Duration::from_millis(100));
     }
     let mut apply_core = ZoomCore::new(fake.clone());
-    let apply = tokio::spawn(async move { apply_core.run_op(ZoomOp::Apply { delta_pt: 0.625 }).await });
+    let apply =
+        tokio::spawn(async move { apply_core.run_op(ZoomOp::Apply { delta_pt: 0.625 }).await });
     tokio::task::yield_now().await;
     tokio::time::advance(Duration::from_millis(100)).await;
     tokio::task::yield_now().await;
@@ -65,6 +69,9 @@ async fn reset_waits_for_inflight_apply_then_rereads_and_reverts() {
     assert_eq!(fake.size(id), 14.0);
     assert!(fake.0.lock().unwrap().records.is_empty());
     let calls = fake.0.lock().unwrap().log.len();
-    ZoomCore::new(fake.clone()).run_op(ZoomOp::Revert).await.unwrap();
+    ZoomCore::new(fake.clone())
+        .run_op(ZoomOp::Revert)
+        .await
+        .unwrap();
     assert_eq!(fake.0.lock().unwrap().log.len(), calls);
 }

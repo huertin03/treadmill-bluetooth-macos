@@ -89,7 +89,10 @@ fn set_key(key: &str, value: &str) -> Result<()> {
 }
 async fn print_probe<I: AlacrittyIpc>(core: &mut ZoomCore<I>, config: ZoomConfig) -> Result<()> {
     print_setting(config);
-    let path = core.ipc.lock_path().ok_or_else(|| anyhow::anyhow!("missing Alacritty zoom lock path"))?;
+    let path = core
+        .ipc
+        .lock_path()
+        .ok_or_else(|| anyhow::anyhow!("missing Alacritty zoom lock path"))?;
     let guard = crate::alacritty_zoom::lock::ZoomLock::try_acquire(&path)?;
     let instances = if guard.is_some() {
         core.discover_and_prune()?
@@ -187,11 +190,17 @@ mod tests {
         print_probe(&mut core, ZoomConfig::default()).await.unwrap();
         assert_eq!(started.elapsed(), std::time::Duration::ZERO);
         assert_eq!(fake.0.lock().unwrap().records.len(), 1);
-        assert!(fake.0.lock().unwrap().log.iter().all(|call| call.contains("get-config")));
+        assert!(
+            fake.0
+                .lock()
+                .unwrap()
+                .log
+                .iter()
+                .all(|call| call.contains("get-config"))
+        );
         assert_eq!(fake.size(live), 12.0);
         drop(guard);
         print_probe(&mut core, ZoomConfig::default()).await.unwrap();
         assert!(fake.0.lock().unwrap().records.is_empty());
     }
-
 }
