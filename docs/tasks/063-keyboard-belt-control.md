@@ -82,6 +82,12 @@ both the live speed and what it has just commanded, so `speed_step:*` and
 - Rules gated by `[:uhk]`, mandatory `command` (either side), block after
   "UHK: Disable cmd+tab": `{:ckey :scan_next_track :modi :command}` → `"$HOME/.bin/tm speed up"`,
   etc. (`a521cf4`). Compiled output passes `karabiner_cli --lint-complex-modifications`.
+- **Karabiner device setting (outside `karabiner.edn`, live fix 2026-09-15):** the UHK media keys come from
+  its separate consumer HID interface, which Karabiner does not modify by default — the first live test
+  did nothing and no `speed_step` row reached the queue. EventViewer still showed the events. Enabled via
+  profile `devices` entry `{"identifiers": {"is_consumer": true, "product_id": 3, "vendor_id": 14248},
+  "ignore": false}`; `core_service.log` then shows `UHK 60 v2 (device_id:4294995553) … (grabbed)`; goku
+  keeps the entry.
 - No macOS or app shortcut uses Cmd + media keys; Karabiner consumes the event, so the
   player never sees it. Plain media keys (without Cmd) are unchanged.
 - `shell_command` is confirmed working on KE 16.1.0 (Karabiner log 2026-09-09
