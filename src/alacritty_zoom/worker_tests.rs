@@ -188,6 +188,20 @@ async fn persistent_rescan_error_warns_once() {
     tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
     settle().await;
     assert_eq!(logs.count("rescan recovered"), 1);
+    fake.0.lock().unwrap().fail_discovery = true;
+    tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+    settle().await;
+    assert_eq!(logs.count("WARN"), 2);
+    fake.0.lock().unwrap().fail_discovery = false;
+    handle.set_active(false);
+    settle().await;
+    assert_eq!(logs.count("rescan recovered"), 2);
+    handle.set_active(true);
+    settle().await;
+    fake.0.lock().unwrap().fail_discovery = true;
+    tokio::time::advance(INSTANCE_RESCAN_INTERVAL).await;
+    settle().await;
+    assert_eq!(logs.count("WARN"), 3);
     drop(handle);
     task.await.unwrap();
 }

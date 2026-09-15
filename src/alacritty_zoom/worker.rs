@@ -67,22 +67,21 @@ async fn run_worker<I: AlacrittyIpc>(
         let want = *receiver.borrow_and_update();
         // A failed op may have partially changed instances. Even if a newer want
         // matches the last completed state, reconcile it once to repair those writes.
-        let op = plan(applied, &want).or_else(|| {
-            retry_pending.then(|| {
-                if want.config.enabled && want.active {
-                    ZoomOp::Apply {
-                        delta_pt: want.config.delta_pt,
-                    }
-                } else {
-                    ZoomOp::Revert
-                }
-            })
-        });
+        let planned_from = if retry_pending {
+            Applied::Unknown
+        } else {
+            applied
+        };
+        let op = plan(planned_from, &want);
         if let Some(op) = op {
             match core.run_op(op).await {
                 Ok(()) => {
                     if retry_pending {
                         tracing::info!("Alacritty zoom reconciliation recovered");
+                    }
+                    if rescan_failed {
+                        tracing::info!("Alacritty zoom rescan recovered during reconciliation");
+                        rescan_failed = false;
                     }
                     retry_pending = false;
                     applied = match op {

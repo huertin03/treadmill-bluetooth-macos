@@ -23,8 +23,15 @@ pub struct State {
     pub lock_path: Option<std::path::PathBuf>,
     pub call_delay: Option<std::time::Duration>,
 }
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Fake(pub Arc<Mutex<State>>);
+impl Default for Fake {
+    fn default() -> Self {
+        // Install before any fake can emit events, including tests without capture.
+        init_test_logging();
+        Self(Arc::new(Mutex::new(State::default())))
+    }
+}
 impl Fake {
     pub fn add(&self, pid: i32, start: i64, size: f64) -> Identity {
         let identity = Identity {
@@ -201,7 +208,7 @@ impl Drop for LogGuard {
         CURRENT_LOGS.with(|logs| *logs.borrow_mut() = self.0.take());
     }
 }
-pub fn capture_logs() -> (Logs, LogGuard) {
+fn init_test_logging() {
     LOG_SUBSCRIBER.call_once(|| {
         let subscriber = tracing_subscriber::fmt()
             .without_time()
@@ -211,6 +218,9 @@ pub fn capture_logs() -> (Logs, LogGuard) {
             .finish();
         tracing::subscriber::set_global_default(subscriber).unwrap();
     });
+}
+pub fn capture_logs() -> (Logs, LogGuard) {
+    init_test_logging();
     let logs = Logs::default();
     let previous = CURRENT_LOGS.with(|current| current.replace(Some(logs.clone())));
     (logs, LogGuard(previous))
