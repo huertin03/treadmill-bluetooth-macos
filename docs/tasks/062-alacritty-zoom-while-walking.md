@@ -1,6 +1,7 @@
 # 062 — Alacritty font zoom while walking (`alacritty_zoom`)
 
-**Status:** 📝 planned 2026-09-15. Operator confirmed: font-only revert and its costs (D3/D4), shrink only on `Paused` or session end, and a manual IPC check (grow/shrink both ways, other overrides survive, manual-zoom guard). Facts and sources:
+**Status:** 📝 planned 2026-09-15. Line numbers below predate task 063 (landed the same day, touches
+`session.rs`/`commands`): re-locate by symbol. Operator confirmed: font-only revert and its costs (D3/D4), shrink only on `Paused` or session end, and a manual IPC check (grow/shrink both ways, other overrides survive, manual-zoom guard). Facts and sources:
 research [008](../research/008-alacritty-ipc-font-size.md). Read it first. Everything below is
 derived from it.
 
@@ -103,8 +104,9 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
     - the backoff uses `tokio::time::sleep`, never blocking.
   - Format the size with ≤3 decimals, trailing zeros trimmed (`14.625`, `15`).
 - **D4 — Zoom records in SQLite** (`Store`, new table `alacritty_zoom`:
-  `pid INTEGER PRIMARY KEY, socket TEXT NOT NULL, base_pt REAL NOT NULL, target_pt REAL NOT NULL,
-  applied_at_ms INTEGER NOT NULL`). This is the memory that makes a font-only revert possible after a
+  `pid INTEGER PRIMARY KEY, started_at_us INTEGER NOT NULL, socket TEXT NOT NULL, base_pt REAL NOT NULL,
+  target_pt REAL NOT NULL, applied_at_ms INTEGER NOT NULL`). A record matches an instance only when
+  **both** `pid` and `started_at_us` match (D13). This is the memory that makes a font-only revert possible after a
   daemon crash or restart: `get-config` cannot tell the file base from our override (constraint 5).
   - It is shared safely by the daemon and the `tm` CLI (both already open `Store`).
   - Rows are deleted on revert, and rows whose pid is no longer a live `alacritty` get pruned on every
@@ -142,13 +144,42 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
     pid is not retried until the next op (no WARN spam).
   - "No Alacritty running" → DEBUG, and the state still advances. That is what makes the next point work.
 - **D7 — Late processes.** While `Applied::Zoomed`, a `tokio::time::interval(INSTANCE_RESCAN_INTERVAL
-  = 10s)` arm re-discovers instances and runs `Apply` only on pids not in `zoomed_pids ∪ failed_pids`.
+  = 2s)` arm re-discovers instances and runs `Apply` only on instances (identity per D13) not in
+  `zoomed ∪ failed`.
+  - The rescan is cheap: one `read_dir` of `$TMPDIR` (~600 entries on the host), a name filter first, and
+    then `proc_pidpath`/`proc_pidinfo` only for the ~20 `Alacritty-*.sock` names.
+  - No rescan at all while `Base`.
   This covers Alacritty (re)launched mid-walk; orphan sockets show it does crash. New windows inside
   a zoomed process inherit `-w -1` by themselves (research 008 fact 3).
   - Memory rule: a `select!` `if` guard does **not** stop the arm's future expression from being built on
     every pass. `interval.tick()` is safe to build; do not put `unwrap`s or state-dependent
     construction in an arm expression.
   - `watch::Receiver::changed()` returning `Err` (sender dropped) → INFO, end the task.
+- **D13 — Operator restarts Alacritty (not herdr) — a routine case, not an edge.**
+  - Evidence 2026-09-15: pid 48251 → 79663 within the day, and orphan sockets grew 13 → 19. The
+    operator's restarts do **not** exit cleanly: the socket's `Drop` does not run, so every restart
+    leaves an orphan.
+  - The herdr server survives, and `herdr-bar` re-attaches in the new window (the pty resize is the same as for ⌘=).
+  - **Instance identity = `(pid, start time)`.** The start time comes from
+    `libc::proc_pidinfo(pid, PROC_PIDTBSDINFO)` → `pbi_start_tvsec`/`pbi_start_tvusec` as microseconds.
+    A reused pid can never inherit a record, and `zoomed`/`failed` are keyed the same way.
+  - **Restart while active (walking or stepped off with the belt running):**
+    - the new process starts at the file base (14);
+    - the D7 rescan finds the new identity within ≤2 s and runs `Apply`;
+    - if the socket appears before the first window exists, the `-w -1` override lands in
+      `global_ipc_options`, and the window opens already zoomed (research 008 fact 3). Otherwise it
+      opens at 14 and grows ≤2 s later;
+    - IPC calls to a process still starting may be lost or time out, and verify-and-retry (D3) covers that.
+  - **Restart while not active:** nothing to do. The new process is at base, and the restart even clears the
+    `font.size` pin (D4 cost a) and any manual ⌘= zoom.
+  - **Old records:** the dead identity is pruned on the next op or rescan. It is never reverted, since there is
+    nothing to revert.
+  - **Quit during an op:** calls to that instance fail or time out. Before logging, re-check liveness with
+    `proc_pidpath` + start time. If the process is gone → DEBUG `instance exited mid-op`, prune its
+    record, and do **not** mark it failed or WARN. Only a still-live instance that exhausts its retries gets
+    the WARN.
+  - **Orphan sockets keep piling up** (Alacritty's own file, D2: never deleted by us). Discovery must stay
+    quiet and cheap with dozens of them: DEBUG at most once per identity, not per rescan.
 - **D8 — Triggers (daemon wiring, thin).**
   - `run()` (`src/daemon/run_loop.rs:170`, next to `live_config` at :183-194): load the config, spawn the
     worker with `active=false`. The first convergence is the startup `Revert` of recorded pids.
@@ -268,7 +299,14 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   - `Revert` skips (and deletes the record) when the current size is not ≈ the recorded target;
   - the runner is **never** called with `--reset` (assert on the fake's argv log);
   - active/inactive flapping coalesces to the final state;
-  - rescan while zoomed applies only to a new pid, and nothing is rescanned while `Base`;
+  - rescan while zoomed applies only to a new identity, and nothing is rescanned while `Base`;
+  - **Alacritty restart while zoomed:** identity A disappears and B appears (same or different pid, other
+    start time) → `Apply` on B within one rescan, A's record pruned, no WARN. Then going inactive reverts
+    B only;
+  - the same pid with a different start time is treated as a new instance (record not reused, no revert of a
+    base it never had);
+  - an instance that vanishes mid-op → DEBUG, no WARN, not added to `failed`;
+  - orphan sockets do not produce per-rescan logs;
   - a failing pid is not retried until the next op;
   - a timing-out call → WARN, the worker keeps running.
 - `ipc.rs` runner against a **fake `alacritty` shell script** in a temp dir (never the real Alacritty,
@@ -312,7 +350,12 @@ it or touch the real `$TMPDIR`.
    Repeat a few cycles: every transition must land (IPC retries, constraint 3). The log shows at most
    DEBUG retries, no WARN.
 6. Mid-walk `launchctl kickstart -k "gui/$(id -u)/com.korniychuk.treadmill-bluetooth-macos.daemon"` →
-   revert, then re-apply on `Walking`. Mid-walk quit and relaunch Alacritty → zoomed within ≤10 s.
+   revert, then re-apply on `Walking`.
+6a. Alacritty restart (D13), the way the operator usually does it:
+   - mid-walk → the new window is zoomed within ≤2 s (note whether it opened already zoomed);
+   - stop the belt → it shrinks, and `tm alacritty-zoom` shows no stale record;
+   - restart while not walking → nothing happens;
+   - no WARN in the daemon log for any restart.
 7. Mid-walk `tm alacritty-zoom off` → shrinks within ≤5 s (hot reload) or at once (CLI reset).
 8. The log has no WARN lines about the orphan sockets, and no `WARN` repeated per tick.
 9. The daemon itself proves the launchd context (bare `PATH`, no `ALACRITTY_*` env). The operator skipped
