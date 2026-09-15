@@ -1,6 +1,6 @@
 # 063 — Keyboard belt control: `tm toggle` + `tm speed up|down` (UHK + Karabiner)
 
-> **Статус: done** (2026-09-15), pending live verification on the UHK. Rust side implemented (review fix: live speed 0 refuses a step even with a fresh target); Karabiner side in `macos-keyboard` (`a521cf4`) uses Cmd + Play/Pause | Previous | Next via the Goku fork (ankor-dotfiles task 083).
+> **Статус: done** (2026-09-15), pending live verification on the UHK. Rust side implemented; review fixes: live speed 0 refuses a step even with a fresh target (Claude), and the Codex @ high review's three High findings (`adb035d`, see «Review»); Karabiner side in `macos-keyboard` (`a521cf4`) uses Cmd + Play/Pause | Previous | Next via the Goku fork (ankor-dotfiles task 083).
 > **Класс:** feature · **Приоритет:** medium. Builds on [013](013-control-commands-via-daemon-queue.md) (daemon control queue), [039](039-control-source-and-operator-override.md) (control source / Zone Hold override window), [054](054-speed-centi-newtype.md) (`CentiKmh`).
 > **Источник:** operator 2026-09-15 — control the belt from the external UHK keyboard: Cmd+Play/Pause = start/stop toggle, Cmd+Previous/Next = slower/faster. Only these three actions.
 
@@ -137,3 +137,25 @@ or vendor channels.
 3. On the belt: Cmd+Play → starts; Cmd+Next ×3 quickly → +0.3; Cmd+Prev → −0.1;
    Cmd+Play → stops; Cmd+Play within 5 s of a Start → stops.
 4. MacBook built-in keyboard: Cmd+media keys do nothing treadmill-related.
+
+## Review (Codex @ high, 2026-09-15)
+
+`codex-agent.sh --ro --effort high review-063-treadmill` (effort verified in `metrics.json`). Three High
+findings, all fixed in `adb035d` (fmt + clippy `-D warnings` + 282 tests green; daemon reinstalled):
+
+1. **Daemon-issued Stops did not block speed steps.** Auto-pause (and Zone Hold's safety Stop) never
+   recorded a stopping intent, so a `speed_step` processed in the same iteration could write a target to a
+   decelerating belt. Fix: `BeltIntent::note_safety_stop` — called after every auto-pause / Zone Hold Stop
+   attempt (even a failed or timed-out one may have reached the belt); `resolve_step` refuses within
+   `INTENT_WINDOW`. Toggle is unaffected (the operator did not issue that Stop).
+2. **CLI intent timestamp captured before the BLE round-trip.** A slow RequestControl could leave a
+   recorded Start/Stop already outside the 5 s window (toggle during the countdown would Start again).
+   Fix: `record_cli_intent(…, Instant::now())` after the write succeeds.
+3. **A skipped sample persist dropped the live speed.** `note_live_speed` ran after the persistence
+   `continue`, so a stopped belt seen only in an unpersisted frame still looked moving. Fix: record the
+   decoded speed right after decode, before persistence.
+
+Residual (documented, not fixed): a Stop from the **console button** is only visible through decaying
+telemetry — during deceleration live speed is still > 0, so a speed key there may send a target. The
+daemon does not subscribe to Fitness Machine Status `0x2ADA` (which would report "Stopped by user");
+revisit if the firmware turns out to accept speed targets while stopping.
