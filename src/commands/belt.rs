@@ -42,9 +42,9 @@ impl FromStr for SpeedTarget {
             "up" => Ok(Self::Up),
             "down" => Ok(Self::Down),
             other => {
-                let kmh: f32 = other.parse().map_err(|_| {
-                    format!("invalid speed {other:?}; expected km/h, up, or down")
-                })?;
+                let kmh: f32 = other
+                    .parse()
+                    .map_err(|_| format!("invalid speed {other:?}; expected km/h, up, or down"))?;
                 CentiKmh::from_kmh_f32(kmh)
                     .map(Self::Absolute)
                     .ok_or_else(|| format!("speed {kmh} km/h out of range"))

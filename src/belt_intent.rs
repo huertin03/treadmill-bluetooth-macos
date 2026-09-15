@@ -196,11 +196,7 @@ mod tests {
         let mut intent = BeltIntent::new();
         intent.note_speed(c(320), t0);
         assert_eq!(
-            intent.resolve_step(
-                StepDirection::Up,
-                Some(c(300)),
-                t0 + INTENT_WINDOW
-            ),
+            intent.resolve_step(StepDirection::Up, Some(c(300)), t0 + INTENT_WINDOW),
             Ok(c(310))
         );
     }
