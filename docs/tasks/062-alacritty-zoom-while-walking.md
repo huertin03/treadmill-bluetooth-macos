@@ -1,6 +1,6 @@
 # 062 — Alacritty font zoom while walking (`alacritty_zoom`)
 
-**Status:** 📝 planned 2026-09-15, awaiting operator confirmation. Facts and sources:
+**Status:** 📝 planned 2026-09-15. Operator confirmed: font-only revert and its costs (D3/D4), shrink only on `Paused` or session end, and a manual IPC check (grow/shrink both ways, other overrides survive, manual-zoom guard). Facts and sources:
 research [008](../research/008-alacritty-ipc-font-size.md). Read it first. Everything below is
 derived from it.
 
@@ -9,9 +9,16 @@ derived from it.
 The operator reads the terminal while walking. Eyes move, so small text is tiring, and today they
 press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate that:
 
-- **Only while actually walking.** Presence `Walking` means the belt is moving and steps are growing.
-  Leaving `Walking` (stepped off → `AwayWhileRunning`, belt stopped → `Paused`, treadmill
-  lost, daemon gone) returns the standard size.
+- **Zoom in when walking starts, zoom out only when the walk is really over** (operator decision
+  2026-09-15):
+  - **Grow** on entering presence `Walking` (belt moving + steps growing), from `Unknown`, `Paused` or
+    `AwayWhileRunning`.
+  - **Shrink** only on
+    - `Paused` (belt stopped by any means: the daemon's auto-pause, `tm stop`, the remote, the console), or
+    - the end of the treadmill BLE session (by any path: out of range, power-off, deliberate disconnect,
+      error).
+  - **`AwayWhileRunning` changes nothing.** The operator stepped off, but the belt keeps running, so the
+    font stays big. If nobody returns, auto-pause (`auto_pause_minutes`) stops the belt → `Paused` → shrink.
 - **Alacritty only.** No Alacritty process running → silently skip. Ghostty, WezTerm and every other
   terminal are never touched.
 - **Base size is read from Alacritty itself** (`get-config`, which reflects `~/.alacritty.toml`).
@@ -28,7 +35,15 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
    size was changed with ⌘=/⌘-, until ⌘0. That is Alacritty behaviour we cannot bypass.
    Consequence: the operator stops using ⌘= for walking. "Manual wins" is acceptable
    and must be documented in the CLI status hint.
-3. `msg config` **exits 0 even when the option is rejected**, so apply needs a `get-config` read-back.
+3. **Alacritty 0.17 IPC on macOS is lossy** (research 008 fact 8). The server accepts on a non-blocking
+   listener, and on macOS the accepted socket inherits `O_NONBLOCK`. If the client's bytes have not
+   arrived yet, `read_line` returns `WouldBlock` and the server silently drops the connection.
+   - Observed by the operator: `Error: Os { code: 57, NotConnected }` / `code: 32, BrokenPipe` on about
+     4 of 10 `msg config` calls, and the size was **not** applied.
+   - Observed in a 60-call loop: 1 silent loss with **exit 0**.
+   - So the exit code is meaningless in both directions: `msg config` exits 0 also for a rejected option,
+     and a lost `get-config` prints nothing with exit 0.
+   - **Every set must be verified by a `get-config` read-back and retried** (D3).
 4. `-w -1` overrides **accumulate** in Alacritty (unbounded `Vec`). Only `--reset -w -1` clears them,
    and it clears **all** runtime keys, not just the font. The operator rejected that (D3), so a key
    cannot be un-set, only overwritten with the base value.
@@ -69,13 +84,23 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
     3. `target = base + delta`.
     4. **Persist the record `{pid, socket, base, target}` first** (D4).
     5. `msg -s S config -w -1 font.size=<fmt(target)>`.
-    6. Read back with `get-config`, `WARN` if the result is not ≈ `target`.
+    6. Verify-and-retry (below) until `get-config` reads `≈ target`.
   - `Revert` per **recorded** instance (never an unrecorded one, so windows we did not zoom are
     never touched):
     1. `get-config -w -1` → `cur`.
-    2. If `cur ≈ record.target`, send `config -w -1 font.size=<fmt(record.base)>` and read back.
+    2. If `cur ≈ record.target`, send `config -w -1 font.size=<fmt(record.base)>` and verify-and-retry.
     3. If not, someone else changed it or the pid was reused: skip at INFO.
     4. Delete the record either way.
+  - **Verify-and-retry** (constraint 3):
+    - one *attempt* = `config … font.size=X` (exit code only logged at DEBUG), then `get-config` → size;
+    - success when `≈ X`;
+    - on mismatch, non-zero exit, empty or unparsable `get-config` stdout, or timeout → retry after
+      backoff `IPC_RETRY_BACKOFF = [50, 100, 200, 400] ms`, up to `IPC_MAX_ATTEMPTS = 5`;
+    - a `get-config` in step 1 that comes back empty is retried the same way;
+    - absolute `font.size=X` is idempotent, so a duplicate delivery is harmless (one extra override entry);
+    - `WARN` only when all attempts are exhausted (log attempts, last stderr, last read size);
+    - DEBUG per retry;
+    - the backoff uses `tokio::time::sleep`, never blocking.
   - Format the size with ≤3 decimals, trailing zeros trimmed (`14.625`, `15`).
 - **D4 — Zoom records in SQLite** (`Store`, new table `alacritty_zoom`:
   `pid INTEGER PRIMARY KEY, socket TEXT NOT NULL, base_pt REAL NOT NULL, target_pt REAL NOT NULL,
@@ -92,24 +117,24 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
       fact 4). That is negligible and cleared on Alacritty restart.
 - **D5 — Desired-state worker, not fire-and-forget calls.** One long-lived tokio task spawned in
   `daemon::run_loop::run()` receives a `tokio::sync::watch` of `ZoomWant { config: ZoomConfig,
-  walking: bool }` and converges to the **latest** value sequentially:
+  active: bool }` (`active` is the walk latch from D8, not raw presence) and converges to the **latest** value sequentially:
   - ordering races (walk/stop flapping) are impossible by construction;
   - flapping coalesces;
   - the event loop never waits on a child process.
   
-  The handle `AlacrittyZoom` wraps the `watch::Sender` and exposes `set_walking(bool)` and
+  The handle `AlacrittyZoom` wraps the `watch::Sender` and exposes `set_active(bool)` and
   `set_config(ZoomConfig)`, both via `send_if_modified`.
 - **D6 — Pure planner** `plan(applied: Applied, want: &ZoomWant) -> Option<ZoomOp>`, where
   `Applied = Unknown | Base | Zoomed { delta_pt }` and `ZoomOp = Revert | Apply { delta_pt }`.
 
   | applied | want | op |
   |---|---|---|
-  | `Unknown` | not (enabled ∧ walking) | `Revert` (startup reconcile; touches recorded pids only, so it is a no-op when nothing was zoomed, even with the feature off) |
-  | `Unknown`/`Base` | enabled, walking | `Apply` |
-  | `Base` | disabled or not walking | none |
-  | `Zoomed{d}` | enabled, walking, same `d` | none |
-  | `Zoomed{d}` | enabled, walking, other `d` | `Apply` (pt changed via hot-reload; D3 step 2 keeps the recorded base) |
-  | `Zoomed{_}` | disabled or not walking | `Revert` |
+  | `Unknown` | not (enabled ∧ active) | `Revert` (startup reconcile; touches recorded pids only, so it is a no-op when nothing was zoomed, even with the feature off) |
+  | `Unknown`/`Base` | enabled, active | `Apply` |
+  | `Base` | disabled or not active | none |
+  | `Zoomed{d}` | enabled, active, same `d` | none |
+  | `Zoomed{d}` | enabled, active, other `d` | `Apply` (pt changed via hot-reload; D3 step 2 keeps the recorded base) |
+  | `Zoomed{_}` | disabled or not active | `Revert` |
 
   After an op: `Revert` → `Base`, `Apply` → `Zoomed`.
   - `Apply` runs on **every** discovered instance; `Revert` runs on every recorded live instance.
@@ -126,11 +151,18 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
   - `watch::Receiver::changed()` returning `Err` (sender dropped) → INFO, end the task.
 - **D8 — Triggers (daemon wiring, thin).**
   - `run()` (`src/daemon/run_loop.rs:170`, next to `live_config` at :183-194): load the config, spawn the
-    worker with `walking=false`. The first convergence is the startup `Revert` of recorded pids.
+    worker with `active=false`. The first convergence is the startup `Revert` of recorded pids.
   - Presence transition (`src/daemon/session.rs:244-247`, right after
-    `state.presence_state = …`, before the `match`): `zoom.set_walking(next_state == PresenceState::Walking)`.
+    `state.presence_state = …`, before the `match`): `if let Some(active) =
+    alacritty_zoom::zoom_intent(next_state) { zoom.set_active(active) }`. The pure `zoom_intent` returns:
+    - `Walking` → `Some(true)`;
+    - `Paused` → `Some(false)`;
+    - `AwayWhileRunning` / `Unknown` → `None` (keep the latch).
+    
+    Accepted edge: if the daemon restarts while the operator is stepped off with the belt running, the
+    startup `Revert` shrinks the font, and it grows again on the next `Walking`.
   - Session end (`src/daemon/run_loop.rs:353`, next to `notify::treadmill_lost()`, **before** the
-    possibly-hanging BLE disconnect): `zoom.set_walking(false)`.
+    possibly-hanging BLE disconnect): `zoom.set_active(false)`.
   - Hot reload (`src/config_apply.rs`): add `alacritty_zoom: ZoomConfig` to `LiveConfig` (:18),
     `ConfigDelta` (:33, `is_empty` :44), `diff` (:113), `reload_if_changed` (:152) and
     `apply_config` (:165), plus a new `ConfigEffect::AlacrittyZoomChanged`. Its executor
@@ -217,6 +249,7 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
 ## Tests (inline `#[cfg(test)]`, as everywhere in the repo)
 
 - `plan`: every row of the D6 table.
+- `zoom_intent`: `Walking`→`Some(true)`, `Paused`→`Some(false)`, `AwayWhileRunning`→`None`, `Unknown`→`None`.
 - `parse_socket_pid`:
   - `Alacritty-48251.sock` → `Some`;
   - `Alacritty-.sock`, `Alacritty-x.sock`, `Alacritty-1.log`, `foo.sock` → `None`.
@@ -227,11 +260,14 @@ press ⌘= twice in Alacritty at the start of a walk and ⌘0 after it. Automate
 - `config_apply` (P2): `diff` detects the field; `apply_config` emits `AlacrittyZoomChanged`.
 - Worker with a fake `AlacrittyIpc` (`#[tokio::test(start_paused = true)]`):
   - startup `Revert` touches only recorded pids and never sends anything for unrecorded ones;
-  - walking → per instance `get-config → record → set → read-back`, and leaving walking → `get-config → set base → read-back → delete record`;
+  - active → per instance `get-config → record → set → read-back`, and inactive → `get-config → set base → read-back → delete record`;
+  - **lossy IPC:** the fake drops the first N sets silently (exit 0, size unchanged), fails with a non-zero exit,
+    returns empty `get-config` stdout → the op still converges within `IPC_MAX_ATTEMPTS`. With N ≥ max
+    it gives up with one WARN, and the worker keeps running;
   - re-apply with a new delta while zoomed keeps the recorded base (no compounding);
   - `Revert` skips (and deletes the record) when the current size is not ≈ the recorded target;
   - the runner is **never** called with `--reset` (assert on the fake's argv log);
-  - walking/not-walking flapping coalesces to the final state;
+  - active/inactive flapping coalesces to the final state;
   - rescan while zoomed applies only to a new pid, and nothing is rescanned while `Base`;
   - a failing pid is not retried until the next op;
   - a timing-out call → WARN, the worker keeps running.
@@ -266,12 +302,21 @@ it or touch the real `$TMPDIR`.
 3. Guard check: ⌘= once → `preview` → no visible change (expected) → `reset` → ⌘0.
 4. `scripts/install-daemon.sh` (mandatory after any rebuild, or toasts silently stop), then `tm alacritty-zoom on`.
 5. Walk → grows within ~2 s of `presence transition next_state=Walking` in
-   `~/Library/Logs/treadmill-bluetooth-macos/daemon.log`. Step off → shrinks after the 10 s away
-   threshold. Belt stop → shrinks. Treadmill power-off mid-walk → shrinks.
+   `~/Library/Logs/treadmill-bluetooth-macos/daemon.log`. Then check each way the walk ends:
+   - step off with the belt running → **stays big**, including after `AwayWhileRunning`;
+   - wait for auto-pause → shrinks;
+   - walk again, pause from the remote → shrinks;
+   - walk again, `tm stop` → shrinks;
+   - walk again, power off the treadmill → shrinks on the session end.
+   
+   Repeat a few cycles: every transition must land (IPC retries, constraint 3). The log shows at most
+   DEBUG retries, no WARN.
 6. Mid-walk `launchctl kickstart -k "gui/$(id -u)/com.korniychuk.treadmill-bluetooth-macos.daemon"` →
-   reset, then re-apply on `Walking`. Mid-walk quit and relaunch Alacritty → zoomed within ≤10 s.
+   revert, then re-apply on `Walking`. Mid-walk quit and relaunch Alacritty → zoomed within ≤10 s.
 7. Mid-walk `tm alacritty-zoom off` → shrinks within ≤5 s (hot reload) or at once (CLI reset).
 8. The log has no WARN lines about the orphan sockets, and no `WARN` repeated per tick.
+9. The daemon itself proves the launchd context (bare `PATH`, no `ALACRITTY_*` env). The operator skipped
+   the manual `env -i` / launchd plist checks on purpose; they are covered here.
 
 ## `ankor-dotfiles` follow-up (after smoke, orchestrator session)
 
@@ -286,8 +331,10 @@ it or touch the real `$TMPDIR`.
 
 ## Risks / known limitations
 
-- **Flapping reflow:** every walk↔away transition resizes the grid (herdr/Claude Code redraw). The away
-  threshold (10 s) is the only debounce. If this is annoying in practice, follow up with a revert delay key.
+- **Reflow on pause/resume:** every shrink/grow resizes the grid (herdr/Claude Code redraw). Stepping off
+  no longer triggers it; only a belt stop does.
+- **Lossy upstream IPC** (constraint 3) is handled by verify-and-retry. Worth an upstream Alacritty issue
+  (the accepted stream should be set back to blocking on macOS). Optional follow-up, not part of this task.
 - **Manual zoom wins** (constraint 2), and `tm` cannot detect it (not observable through IPC).
 - **A `font.size` pin stays in the running Alacritty process** after the first walk (D4 a). Editing the font size
   in `.alacritty.toml` needs an Alacritty restart to show. That is the price of not using `--reset`.

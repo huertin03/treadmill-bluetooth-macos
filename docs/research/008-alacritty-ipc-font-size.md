@@ -70,6 +70,27 @@ on the host. Line numbers refer to that tag.
    - Wire format: `SocketMessage` serde JSON, no version field, not documented as stable.
      Use the CLI, preferably the **same binary as the running process**.
 
+8. **IPC is lossy on macOS (race in the server).** `polling/ipc.rs` binds the listener with
+   `set_nonblocking(true)` and then does:
+   ```rust
+   let (stream, _) = self.socket.accept()?;
+   let mut reader = BufReader::new(&stream);
+   match reader.read_line(&mut self.data) {
+       Ok(0) | Err(_) => return Ok(()),   // WouldBlock lands here → connection dropped
+   ```
+   With BSD semantics an accepted socket **inherits `O_NONBLOCK`** (Linux does not). So if the server
+   wakes on accept before the client's bytes arrive, the message is silently dropped.
+   - Client symptoms: `write` → `BrokenPipe` (32) or `shutdown(Write)` → `NotConnected` (57), exit 1.
+   - The same race can also lose a message **with exit 0**: the bytes were buffered and the
+     shutdown succeeded before the drop. A lost `get-config` prints nothing and exits 0, because
+     `handle_reply` treats EOF as OK.
+   - Evidence 2026-09-15:
+     - operator ran `fbig` interactively: ~4/10 calls failed with 57/32, and the first failure
+       left the size at `14.0`;
+     - a 60-call loop on an invisible key (`scrolling.multiplier`) had 0 errors and **1 silent loss**
+       with exit 0.
+   - The loss rate depends on the load on Alacritty's event loop (a font change triggers a resize and redraw).
+
 ## Consequences for the design
 
 - Mechanism: `alacritty msg -s <socket> config -w -1 …` per live process, spawned with a timeout.
@@ -78,7 +99,9 @@ on the host. Line numbers refer to that tag.
   override, and the operator wants the font changed only (2026-09-15). Revert instead writes the
   recorded base back: `config -w -1 font.size=<base>`. The base comes from a zoom record persisted
   before applying, because of fact 5. See task 062 D3/D4.
-- Always read back with `get-config` after `config` (fact 7).
+- Always read back with `get-config` after `config`, and **retry with backoff until it reads the target**
+  (facts 7, 8). The exit code is not a delivery signal in either direction. Setting an absolute
+  `font.size=X` is idempotent, so retries are safe.
 - Find live processes from the socket file names: pid → `proc_pidpath` → basename `alacritty`.
   Never probe by connecting.
 - The operator must stop zooming with ⌘= (fact 1). ⌘0 re-syncs a manually zoomed window.
