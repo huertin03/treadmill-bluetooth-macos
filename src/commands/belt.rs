@@ -76,7 +76,7 @@ pub(crate) async fn run_control(command: ControlCommand) -> Result<()> {
 
     if command.requires_daemon_intent() {
         bail!(
-            "{} needs the daemon holding the treadmill link (live speed and intent memory); start the daemon first",
+            "{} needs the daemon connected to the treadmill (live speed and intent memory); check `tm status` — wake the console or start the daemon",
             command.to_wire()
         );
     }
