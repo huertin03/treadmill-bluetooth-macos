@@ -1,6 +1,6 @@
 # 063 — Keyboard belt control: `tm toggle` + `tm speed up|down` (UHK + Karabiner)
 
-> **Статус: done** (2026-09-15), pending live verification on the UHK. Rust side implemented (review fix: live speed 0 refuses a step even with a fresh target); Karabiner side is in `macos-keyboard`, key layout pending operator choice.
+> **Статус: done** (2026-09-15), pending live verification on the UHK. Rust side implemented (review fix: live speed 0 refuses a step even with a fresh target); Karabiner side in `macos-keyboard` (`a521cf4`) uses Cmd + Play/Pause | Previous | Next via the Goku fork (ankor-dotfiles task 083).
 > **Класс:** feature · **Приоритет:** medium. Builds on [013](013-control-commands-via-daemon-queue.md) (daemon control queue), [039](039-control-source-and-operator-override.md) (control source / Zone Hold override window), [054](054-speed-centi-newtype.md) (`CentiKmh`).
 > **Источник:** operator 2026-09-15 — control the belt from the external UHK keyboard: Cmd+Play/Pause = start/stop toggle, Cmd+Previous/Next = slower/faster. Only these three actions.
 
@@ -12,8 +12,8 @@ through the existing daemon queue:
 | Chord (UHK only) | Shell command | Effect |
 |---|---|---|
 | Cmd + Play/Pause | `$HOME/.bin/tm toggle` | belt moving → Stop; stopped → Start |
-| Cmd + Rewind (prev) | `$HOME/.bin/tm speed down` | target −0.1 km/h |
-| Cmd + Fast Forward (next) | `$HOME/.bin/tm speed up` | target +0.1 km/h |
+| Cmd + Previous Track | `$HOME/.bin/tm speed down` | target −0.1 km/h |
+| Cmd + Next Track | `$HOME/.bin/tm speed up` | target +0.1 km/h |
 
 No sockets, no new IPC: Karabiner `shell_command` → `tm` CLI → SQLite
 `control_commands` queue → daemon executes on the live BLE link (задача 013).
@@ -72,17 +72,18 @@ both the live speed and what it has just commanded, so `speed_step:*` and
 
 ## Karabiner side (repo `macos-keyboard`, done by the orchestrator)
 
-- Goku 0.8.0 (also upstream master) cannot emit `consumer_key_code`
-  `scan_next_track` / `scan_previous_track` — the codes the UHK sends today for
-  next/prev (HID 181/182, current UHK Agent backup). It *can* emit `fast_forward`
-  / `rewind` (179/180) and `play_or_pause` (205).
-- **Manual step (operator, UHK Agent):** remap the two track keys from
-  *Next Track / Previous Track* to *Fast Forward / Rewind* on every layer where
-  they live. macOS treats them as next/previous track (it is what Apple
-  keyboards' F9/F7 send), so plain audio control is unchanged.
-- Rules gated by `[:uhk]`, mandatory `command` (either side), block placed
-  after "UHK: Disable cmd+tab":
-  `{:ckey :play_or_pause :modi :command}` → `"$HOME/.bin/tm toggle"`, etc.
+- The UHK sends Next/Previous Track as `consumer_key_code` `scan_next_track` /
+  `scan_previous_track` (HID 181/182, confirmed in Karabiner-EventViewer) and Play/Pause as
+  `play_or_pause` (205).
+- Upstream Goku (0.8.0 and master) rejects `scan_*` (issue #184). First iteration used
+  `rewind`/`fast_forward` plus a UHK Agent remap (`1bbd245`); superseded by our Goku fork
+  `korniychuk/GokuRakuJoudo` (`brew install korniychuk/tap/goku`, ankor-dotfiles task 083,
+  upstream PR yqrashawn/GokuRakuJoudo#271). No UHK remap needed.
+- Rules gated by `[:uhk]`, mandatory `command` (either side), block after
+  "UHK: Disable cmd+tab": `{:ckey :scan_next_track :modi :command}` → `"$HOME/.bin/tm speed up"`,
+  etc. (`a521cf4`). Compiled output passes `karabiner_cli --lint-complex-modifications`.
+- No macOS or app shortcut uses Cmd + media keys; Karabiner consumes the event, so the
+  player never sees it. Plain media keys (without Cmd) are unchanged.
 - `shell_command` is confirmed working on KE 16.1.0 (Karabiner log 2026-09-09
   shows `open -a` stderr), despite the stale July note in `karabiner.edn`.
 - `~/.bin/tm` → release binary; `scripts/install-daemon.sh` refreshes it.
